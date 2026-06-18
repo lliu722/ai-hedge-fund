@@ -189,6 +189,7 @@ You understand English and Chinese (中文). ALWAYS respond in English unless th
 def handle_message(text: str, chat_id: str):
     """Handle a user message using the LangGraph agent."""
     try:
+        send_message("⏳ Working on it...", chat_id)
         result = agent.invoke({
             "messages": [
                 SystemMessage(content=SYSTEM_PROMPT),
