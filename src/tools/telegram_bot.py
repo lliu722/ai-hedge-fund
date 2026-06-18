@@ -20,6 +20,10 @@ def send_message(text: str, chat_id: str = None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     # Strip markdown bold/italic that Telegram HTML mode doesn't like
     clean = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+    clean = re.sub(r'#{1,6}\s+', '', clean)
+    clean = re.sub(r'\|.*?\|', '', clean)
+    clean = re.sub(r'-{3,}', '—', clean)
+    clean = re.sub(r'\*([^*]+)\*', r'<i>\1</i>', clean)
     for chunk in [clean[i:i+4000] for i in range(0, len(clean), 4000)]:
         requests.post(url, json={
             "chat_id": chat_id or TELEGRAM_CHAT_ID,
@@ -180,7 +184,7 @@ You have access to tools for live prices, news, SEC filings, earnings calendars,
 The user's portfolio focuses on: NVDA, TSM, AVGO, AMD, ASML, ARM, ALAB, PLTR, APP, CEG.
 Always use tools to fetch real data — never make up prices or news.
 Respond concisely and directly. Use HTML formatting for Telegram (bold with <b>tags</b>).
-You understand English and Chinese (中文). Respond in the same language the user writes in."""
+You understand English and Chinese (中文). ALWAYS respond in English unless the user explicitly writes in Chinese."""
 
 def handle_message(text: str, chat_id: str):
     """Handle a user message using the LangGraph agent."""
