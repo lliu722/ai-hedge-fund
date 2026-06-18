@@ -1,203 +1,207 @@
 import os
-import json
+import re
 import requests
 import threading
 from datetime import datetime
 from dotenv import load_dotenv
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+from langchain_deepseek import ChatDeepSeek
 
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+
+# ── Telegram helpers ──────────────────────────────────────────────────────────
 
 def send_message(text: str, chat_id: str = None):
-    """Send a message via Telegram."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id or TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-    }
-    requests.post(url, json=payload)
+    # Strip markdown bold/italic that Telegram HTML mode doesn't like
+    clean = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+    for chunk in [clean[i:i+4000] for i in range(0, len(clean), 4000)]:
+        requests.post(url, json={
+            "chat_id": chat_id or TELEGRAM_CHAT_ID,
+            "text": chunk,
+            "parse_mode": "HTML",
+        })
 
-def understand_intent(message: str) -> dict:
+def get_updates(offset: int = 0):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+    r = requests.get(url, params={"offset": offset, "timeout": 30})
+    return r.json().get("result", []) if r.status_code == 200 else []
+
+# ── Tools ─────────────────────────────────────────────────────────────────────
+
+@tool
+def deep_dive(ticker: str) -> str:
     """
-    Use DeepSeek to understand what the user is asking for.
-    Returns a structured intent with action and parameters.
+    Run a full AI research deep dive on a stock ticker.
+    Returns bull case, bear case, catalysts, valuation, and verdict.
+    Use when the user asks for analysis, research, or a deep dive on a company.
     """
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    system = """You are an intent classifier for an AI investment research assistant.
-Classify the user message into one of these actions:
-- deep_dive: user wants a research report on a specific company
-- price: user wants current price/market data for a ticker
-- news: user wants latest news on a company or topic
-- earnings: user wants upcoming earnings dates
-- briefing: user wants a market overview or morning briefing
-- portfolio: user wants to see their portfolio summary
-- help: user is unsure what to ask
+    from src.tools.deep_dive import deep_dive as _deep_dive
+    return _deep_dive(ticker.upper())
 
-Respond ONLY with valid JSON in this exact format:
-{"action": "action_name", "ticker": "TICKER_OR_NULL", "query": "original query"}
-
-Examples:
-"what's going on with nvidia" -> {"action": "deep_dive", "ticker": "NVDA", "query": "what's going on with nvidia"}
-"give me the price of ASML" -> {"action": "price", "ticker": "ASML", "query": "give me the price of ASML"}
-"any earnings coming up" -> {"action": "earnings", "ticker": null, "query": "any earnings coming up"}
-"how is the market today" -> {"action": "briefing", "ticker": null, "query": "how is the market today"}
-"最新的NVDA消息" -> {"action": "news", "ticker": "NVDA", "query": "最新的NVDA消息"}
-"AVGO的深度分析" -> {"action": "deep_dive", "ticker": "AVGO", "query": "AVGO的深度分析"}"""
-
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": message}
-        ],
-        "max_tokens": 100,
-        "temperature": 0.1,
-    }
-    response = requests.post(
-        "https://api.deepseek.com/v1/chat/completions",
-        headers=headers,
-        json=payload,
+@tool
+def get_price(ticker: str) -> str:
+    """
+    Get the live price and key market data for a stock ticker.
+    Use when the user asks for a price, stock quote, or market data.
+    """
+    from src.tools.prices import get_live_prices
+    data = get_live_prices([ticker.upper()]).get(ticker.upper(), {})
+    direction = "📈" if (data.get("change_pct") or 0) > 0 else "📉"
+    return (
+        f"{direction} <b>{ticker.upper()}</b>\n"
+        f"Price: <b>${data.get('price')}</b>\n"
+        f"Today: <b>{data.get('change_pct'):+.2f}%</b>\n"
+        f"52w High: ${data.get('week52_high')}\n"
+        f"52w Low: ${data.get('week52_low')}\n"
+        f"P/E: {data.get('pe_ratio')}"
     )
-    if response.status_code == 200:
-        content = response.json()["choices"][0]["message"]["content"]
-        # Clean up any markdown
-        content = content.replace("```json", "").replace("```", "").strip()
-        return json.loads(content)
-    return {"action": "help", "ticker": None, "query": message}
 
-def handle_message(message: str, chat_id: str):
-    """Route a message to the right tool and send back a response."""
-    send_message("⏳ Processing...", chat_id)
-
-    try:
-        intent = understand_intent(message)
-        action = intent.get("action")
-        ticker = intent.get("ticker")
-
-        if action == "deep_dive" and ticker:
-            send_message(f"🔬 Running deep dive on <b>{ticker}</b>...\nThis takes about 60 seconds.", chat_id)
-            from src.tools.deep_dive import deep_dive
-            report = deep_dive(ticker)
-            # Split long messages for Telegram (4096 char limit)
-            if len(report) > 4000:
-                chunks = [report[i:i+4000] for i in range(0, len(report), 4000)]
-                for chunk in chunks:
-                    send_message(chunk, chat_id)
-            else:
-                send_message(report, chat_id)
-
-        elif action == "price" and ticker:
-            from src.tools.prices import get_live_prices
-            prices = get_live_prices([ticker])
-            data = prices.get(ticker, {})
-            direction = "📈" if (data.get("change_pct") or 0) > 0 else "📉"
-            msg = (
-                f"{direction} <b>{ticker}</b>\n"
-                f"Price: <b>${data.get('price')}</b>\n"
-                f"Today: <b>{data.get('change_pct'):+.2f}%</b>\n"
-                f"52w High: ${data.get('week52_high')}\n"
-                f"52w Low: ${data.get('week52_low')}\n"
-                f"P/E: {data.get('pe_ratio')}"
-            )
-            send_message(msg, chat_id)
-
-        elif action == "news":
-            from src.tools.news_fetcher import get_news_for_tickers, get_macro_news
-            if ticker:
-                news = get_news_for_tickers([ticker])
-                articles = news.get(ticker, [])
-                if articles:
-                    msg = f"🗞️ <b>Latest news: {ticker}</b>\n\n"
-                    for a in articles[:5]:
-                        msg += f"• {a['title']}\n"
-                else:
-                    msg = f"No recent news found for {ticker}."
-            else:
-                articles = get_macro_news()
-                msg = "🌍 <b>Macro & AI Infrastructure News</b>\n\n"
-                for a in articles[:5]:
-                    msg += f"• {a['title']}\n"
-            send_message(msg, chat_id)
-
-        elif action == "earnings":
-            from src.tools.earnings_calendar import get_earnings_dates
-            watchlist = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG"]
-            dates = get_earnings_dates(watchlist)
-            msg = "📅 <b>Earnings Calendar</b>\n\n"
-            upcoming = [(t, d) for t, d in dates.items() if d.get("days_until") is not None and d.get("days_until") >= 0]
-            upcoming.sort(key=lambda x: x[1]["days_until"])
-            if upcoming:
-                for ticker, data in upcoming:
-                    alert = " ⚠️" if data["alert"] else ""
-                    msg += f"• <b>{ticker}</b>: {data['date']} ({data['days_until']} days){alert}\n"
-            else:
-                msg += "No upcoming earnings found in next 60 days."
-            send_message(msg, chat_id)
-
-        elif action == "briefing":
-            from src.tools.news_fetcher import get_macro_news
-            from src.tools.prices import get_live_prices
-            watchlist = ["NVDA", "TSM", "AVGO", "AMD", "ASML"]
-            prices = get_live_prices(watchlist)
-            macro = get_macro_news()
-            msg = f"🌅 <b>Market Briefing — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
-            msg += "<b>Your Watchlist:</b>\n"
-            for t, d in prices.items():
-                direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
-                msg += f"{direction} {t}: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
-            msg += "\n<b>Macro News:</b>\n"
-            for a in macro[:3]:
-                msg += f"• {a['title']}\n"
-            send_message(msg, chat_id)
-
-        elif action == "portfolio":
-            from src.tools.prices import get_live_prices
-            watchlist = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG"]
-            prices = get_live_prices(watchlist)
-            msg = f"💼 <b>Portfolio Watchlist</b>\n{datetime.now().strftime('%H:%M GMT')}\n\n"
-            for t, d in prices.items():
-                direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
-                msg += f"{direction} <b>{t}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
-            send_message(msg, chat_id)
-
+@tool
+def get_news(ticker: str = None) -> str:
+    """
+    Get the latest news for a specific stock ticker or general AI infrastructure news.
+    Use when the user asks about news, what happened, or latest developments.
+    If no ticker is specified, return macro AI infrastructure news.
+    """
+    from src.tools.news_fetcher import get_news_for_tickers, get_macro_news
+    if ticker:
+        t = ticker.upper()
+        articles = get_news_for_tickers([t]).get(t, [])
+        if articles:
+            msg = f"🗞️ <b>Latest news: {t}</b>\n\n"
+            for a in articles[:5]:
+                msg += f"• <b>{a['title']}</b>\n"
+                if a.get("content"):
+                    msg += f"  <i>{a['content'][:150].strip()}...</i>\n\n"
         else:
-            msg = (
-                "🤖 <b>AI Investor — What I can do:</b>\n\n"
-                "• <b>Deep dive</b> — 'deep dive NVDA' or '分析一下ASML'\n"
-                "• <b>Price</b> — 'AVGO price' or 'what's AMD at'\n"
-                "• <b>News</b> — 'latest NVDA news' or '最新消息'\n"
-                "• <b>Earnings</b> — 'any earnings coming up'\n"
-                "• <b>Briefing</b> — 'morning briefing' or 'how's the market'\n"
-                "• <b>Portfolio</b> — 'show my portfolio'\n\n"
-                "Just talk naturally — English or 中文 both work."
-            )
-            send_message(msg, chat_id)
+            msg = f"No recent news found for {t}."
+    else:
+        articles = get_macro_news()
+        msg = "🌍 <b>AI Infrastructure & Macro News</b>\n\n"
+        for a in articles[:5]:
+            msg += f"• <b>{a['title']}</b>\n"
+            if a.get("content"):
+                msg += f"  <i>{a['content'][:150].strip()}...</i>\n\n"
+    return msg
 
+@tool
+def get_earnings_calendar() -> str:
+    """
+    Get upcoming earnings dates for the watchlist.
+    Use when the user asks about earnings, when companies report, or upcoming events.
+    """
+    from src.tools.earnings_calendar import get_earnings_dates
+    watchlist = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG"]
+    dates = get_earnings_dates(watchlist)
+    msg = "📅 <b>Earnings Calendar</b>\n\n"
+    upcoming = [(t, d) for t, d in dates.items()
+                if d.get("days_until") is not None and d.get("days_until") >= 0]
+    upcoming.sort(key=lambda x: x[1]["days_until"])
+    if upcoming:
+        for ticker, data in upcoming:
+            alert = " ⚠️" if data["alert"] else ""
+            msg += f"• <b>{ticker}</b>: {data['date']} ({data['days_until']} days){alert}\n"
+    else:
+        msg += "No upcoming earnings in next 60 days."
+    return msg
+
+@tool
+def get_portfolio() -> str:
+    """
+    Show the current watchlist with live prices and daily moves.
+    Use when the user asks about their portfolio, watchlist, or holdings.
+    """
+    from src.tools.prices import get_live_prices
+    watchlist = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG"]
+    prices = get_live_prices(watchlist)
+    msg = f"💼 <b>Portfolio Watchlist</b>\n{datetime.now().strftime('%d %b %Y %H:%M GMT')}\n\n"
+    for t, d in prices.items():
+        direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
+        msg += f"{direction} <b>{t}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
+    return msg
+
+@tool
+def get_market_briefing() -> str:
+    """
+    Get a morning market briefing with watchlist prices and macro news.
+    Use when the user asks about the market, how things are going, or wants a briefing.
+    """
+    from src.tools.news_fetcher import get_macro_news
+    from src.tools.prices import get_live_prices
+    watchlist = ["NVDA", "TSM", "AVGO", "AMD", "ASML"]
+    prices = get_live_prices(watchlist)
+    macro = get_macro_news()
+    msg = f"🌅 <b>Market Briefing — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
+    msg += "<b>AI Infra Watchlist:</b>\n"
+    for t, d in prices.items():
+        direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
+        msg += f"{direction} {t}: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
+    msg += "\n<b>Macro News:</b>\n"
+    for a in macro[:3]:
+        msg += f"• <b>{a['title']}</b>\n"
+        if a.get("content"):
+            msg += f"  <i>{a['content'][:150].strip()}...</i>\n\n"
+    return msg
+
+@tool
+def get_sec_filings(ticker: str) -> str:
+    """
+    Get recent SEC filings (10-K, 10-Q, 8-K) for a company.
+    Use when the user asks about filings, annual reports, or regulatory documents.
+    """
+    from src.tools.sec_filings import get_filing_summary
+    summary = get_filing_summary(ticker.upper())
+    msg = f"📄 <b>SEC Filings: {ticker.upper()}</b>\n\n"
+    msg += f"• Latest 10-K: {summary['10-K'][0]['date'] if summary['10-K'] else 'N/A'}\n"
+    msg += f"• Recent 10-Qs: {', '.join([f['date'] for f in summary['10-Q']])}\n"
+    msg += f"• Recent 8-Ks: {', '.join([f['date'] for f in summary['8-K']])}\n"
+    return msg
+
+# ── Agent setup ───────────────────────────────────────────────────────────────
+
+llm = ChatDeepSeek(
+    model="deepseek-chat",
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    temperature=0.3,
+)
+
+tools = [deep_dive, get_price, get_news, get_earnings_calendar, get_portfolio, get_market_briefing, get_sec_filings]
+
+agent = create_react_agent(llm, tools)
+
+SYSTEM_PROMPT = """You are an AI investment research assistant specialising in AI infrastructure equity.
+You have access to tools for live prices, news, SEC filings, earnings calendars, deep dive research reports, and portfolio data.
+The user's portfolio focuses on: NVDA, TSM, AVGO, AMD, ASML, ARM, ALAB, PLTR, APP, CEG.
+Always use tools to fetch real data — never make up prices or news.
+Respond concisely and directly. Use HTML formatting for Telegram (bold with <b>tags</b>).
+You understand English and Chinese (中文). Respond in the same language the user writes in."""
+
+def handle_message(text: str, chat_id: str):
+    """Handle a user message using the LangGraph agent."""
+    try:
+        send_message("⏳ On it...", chat_id)
+        result = agent.invoke({
+            "messages": [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=text)
+            ]
+        })
+        response = result["messages"][-1].content
+        send_message(response, chat_id)
     except Exception as e:
         send_message(f"❌ Error: {str(e)[:200]}", chat_id)
 
-def get_updates(offset: int = 0) -> list:
-    """Poll Telegram for new messages."""
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-    params = {"offset": offset, "timeout": 30, "allowed_updates": ["message"]}
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        return response.json().get("result", [])
-    return []
+# ── Bot loop ──────────────────────────────────────────────────────────────────
 
 def run_bot():
-    """Main bot loop — polls for messages and handles them."""
-    print("🤖 AI Investor Bot is running...")
-    print("Send a message to your Telegram bot to get started.")
+    print("🤖 AI Investor Bot (LangGraph) is running...")
     print("Press Ctrl+C to stop.\n")
-
     offset = 0
     while True:
         try:
@@ -207,16 +211,9 @@ def run_bot():
                 message = update.get("message", {})
                 chat_id = str(message.get("chat", {}).get("id", ""))
                 text = message.get("text", "")
-
                 if text and chat_id:
-                    print(f"[{datetime.now().strftime('%H:%M')}] Received: {text}")
-                    # Handle in a thread so bot stays responsive
-                    thread = threading.Thread(
-                        target=handle_message,
-                        args=(text, chat_id)
-                    )
-                    thread.start()
-
+                    print(f"[{datetime.now().strftime('%H:%M')}] {text}")
+                    threading.Thread(target=handle_message, args=(text, chat_id)).start()
         except KeyboardInterrupt:
             print("\nBot stopped.")
             break
