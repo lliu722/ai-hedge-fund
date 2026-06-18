@@ -16,11 +16,31 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 WATCHLIST = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG"]
 
+TICKER_NAMES = {
+    "NVDA": "Nvidia",
+    "TSM": "TSMC",
+    "AVGO": "Broadcom",
+    "AMD": "AMD",
+    "ASML": "ASML",
+    "ARM": "Arm Holdings",
+    "ALAB": "Astera Labs",
+    "PLTR": "Palantir",
+    "APP": "Applovin",
+    "CEG": "Constellation Energy",
+}
+
+
+def fmt(ticker: str) -> str:
+    t = ticker.upper()
+    name = TICKER_NAMES.get(t)
+    return f"{t} ({name})" if name else t
+
+
 # ── System Prompt ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are an AI investment research assistant specialising in AI infrastructure equity.
+SYSTEM_PROMPT = f"""You are an AI investment research assistant specialising in AI infrastructure equity.
 You have access to tools for live prices, news, SEC filings, earnings calendars, deep dive research reports, and portfolio data.
-The user's portfolio focuses on: NVDA, TSM, AVGO, AMD, ASML, ARM, ALAB, PLTR, APP, CEG.
+The user's portfolio focuses on: {", ".join(fmt(t) for t in WATCHLIST)}.
 Always use tools to fetch real data — never make up prices or news.
 
 CRITICAL FORMATTING RULES — follow exactly, no exceptions:
@@ -30,7 +50,8 @@ CRITICAL FORMATTING RULES — follow exactly, no exceptions:
 - NEVER use bullet points with - (use • instead)
 - Use <b>text</b> for bold only
 - Use <i>text</i> for italics only
-- When showing prices or portfolio, show each ticker on its own line: 📈 <b>NVDA</b>: $204.65 (+1.33%)
+- When showing prices or portfolio, show each ticker on its own line: 📈 <b>{fmt("NVDA")}</b>: $204.65 (+1.33%)
+- Always show tickers with company names, e.g. {fmt("NVDA")} not just NVDA
 - Keep responses clean — plain text with <b>bold</b> for emphasis
 - ALWAYS respond in English unless the user explicitly writes in Chinese"""
 
@@ -85,10 +106,10 @@ def get_price(ticker: str) -> str:
     from src.tools.prices import get_live_prices
     data = get_live_prices([ticker.upper()]).get(ticker.upper(), {})
     if not data:
-        return f"Could not fetch price for {ticker.upper()}."
+        return f"Could not fetch price for {fmt(ticker)}."
     direction = "📈" if (data.get("change_pct") or 0) > 0 else "📉"
     return (
-        f"{direction} <b>{ticker.upper()}</b>\n"
+        f"{direction} <b>{fmt(ticker)}</b>\n"
         f"Price: <b>${data.get('price')}</b>\n"
         f"Today: <b>{data.get('change_pct'):+.2f}%</b>\n"
         f"52w High: ${data.get('week52_high')}\n"
@@ -108,14 +129,14 @@ def get_news(ticker: str = None) -> str:
         t = ticker.upper()
         articles = get_news_for_tickers([t]).get(t, [])
         if articles:
-            msg = f"🗞 <b>Latest news: {t}</b>\n\n"
+            msg = f"🗞 <b>Latest news: {fmt(t)}</b>\n\n"
             for a in articles[:5]:
                 msg += f"• <b>{a['title']}</b>\n"
                 if a.get("content"):
                     msg += f"  <i>{a['content'][:150].strip()}...</i>\n\n"
             return msg
         else:
-            return f"No recent search results for {t}. Provide a brief summary from your training knowledge about recent {t} developments instead."
+            return f"No recent search results for {fmt(t)}. Provide a brief summary from your training knowledge about recent {fmt(t)} developments instead."
     else:
         articles = get_macro_news()
         msg = "🌍 <b>AI Infrastructure & Macro News</b>\n\n"
@@ -142,7 +163,7 @@ def get_earnings_calendar() -> str:
     if upcoming:
         for ticker, data in upcoming:
             alert = " ⚠️ SOON" if data["alert"] else ""
-            msg += f"• <b>{ticker}</b>: {data['date']} ({data['days_until']} days){alert}\n"
+            msg += f"• <b>{fmt(ticker)}</b>: {data['date']} ({data['days_until']} days){alert}\n"
     else:
         msg += "No upcoming earnings found in next 60 days."
     return msg
@@ -158,7 +179,7 @@ def get_portfolio() -> str:
     msg = f"💼 <b>Portfolio Watchlist</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M GMT')}</i>\n\n"
     for t, d in prices.items():
         direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
-        msg += f"{direction} <b>{t}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
+        msg += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
     return msg
 
 @tool
@@ -175,7 +196,7 @@ def get_market_briefing() -> str:
     msg += "<b>Top Watchlist Moves:</b>\n"
     for t, d in prices.items():
         direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
-        msg += f"{direction} <b>{t}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
+        msg += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
     msg += "\n<b>Macro & AI News:</b>\n"
     for a in macro[:3]:
         msg += f"• <b>{a['title']}</b>\n"
@@ -191,7 +212,7 @@ def get_sec_filings(ticker: str) -> str:
     """
     from src.tools.sec_filings import get_filing_summary
     summary = get_filing_summary(ticker.upper())
-    msg = f"📄 <b>SEC Filings: {ticker.upper()}</b>\n\n"
+    msg = f"📄 <b>SEC Filings: {fmt(ticker)}</b>\n\n"
     msg += f"• Latest 10-K: {summary['10-K'][0]['date'] if summary['10-K'] else 'N/A'}\n"
     msg += f"• Recent 10-Qs: {', '.join([f['date'] for f in summary['10-Q']]) or 'N/A'}\n"
     msg += f"• Recent 8-Ks: {', '.join([f['date'] for f in summary['8-K']]) or 'N/A'}\n"

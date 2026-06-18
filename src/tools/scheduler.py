@@ -1,16 +1,36 @@
 import os
 import schedule
 import time
-import threading
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
 
+WATCHLIST = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG"]
+
+TICKER_NAMES = {
+    "NVDA": "Nvidia",
+    "TSM": "TSMC",
+    "AVGO": "Broadcom",
+    "AMD": "AMD",
+    "ASML": "ASML",
+    "ARM": "Arm Holdings",
+    "ALAB": "Astera Labs",
+    "PLTR": "Palantir",
+    "APP": "Applovin",
+    "CEG": "Constellation Energy",
+}
+
+
+def fmt(ticker: str) -> str:
+    t = ticker.upper()
+    name = TICKER_NAMES.get(t)
+    return f"{t} ({name})" if name else t
+
+
 def send_morning_briefing():
     """Build and send the full morning briefing."""
     print(f"[{datetime.now().strftime('%H:%M')}] Running morning briefing...")
-    
     try:
         from src.tools.prices import get_live_prices
         from src.tools.news_fetcher import get_macro_news
@@ -18,28 +38,21 @@ def send_morning_briefing():
         from src.tools.notify import send_telegram
         import requests
 
-        WATCHLIST = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG"]
         DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-
-        # Step 1 — Live prices
         prices = get_live_prices(WATCHLIST)
-
-        # Step 2 — Macro news
         macro = get_macro_news()
-
-        # Step 3 — Earnings alerts
         dates = get_earnings_dates(WATCHLIST)
+
         upcoming = [
             (t, d) for t, d in dates.items()
             if d.get("days_until") is not None and 0 <= d.get("days_until") <= 14
         ]
         upcoming.sort(key=lambda x: x[1]["days_until"])
 
-        # Step 4 — Build context for DeepSeek
         prices_text = ""
         for t, d in prices.items():
             direction = "▲" if (d.get("change_pct") or 0) > 0 else "▼"
-            prices_text += f"{direction} {t}: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
+            prices_text += f"{direction} {fmt(t)}: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
 
         news_text = ""
         for a in macro[:5]:
@@ -50,11 +63,10 @@ def send_morning_briefing():
         earnings_text = ""
         if upcoming:
             for t, d in upcoming:
-                earnings_text += f"- {t}: reports in {d['days_until']} days ({d['date']})\n"
+                earnings_text += f"- {fmt(t)}: reports in {d['days_until']} days ({d['date']})\n"
         else:
             earnings_text = "No earnings in the next 14 days."
 
-        # Step 5 — DeepSeek synthesis
         headers = {
             "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
             "Content-Type": "application/json",
@@ -99,20 +111,15 @@ Rules:
         if response.status_code == 200:
             briefing = response.json()["choices"][0]["message"]["content"]
         else:
-            briefing = "Could not generate AI briefing. Raw data below."
+            briefing = "Could not generate AI briefing."
 
-        # Step 6 — Format and send
         header = f"🌅 <b>Morning Briefing — {datetime.now().strftime('%A %d %B %Y')}</b>\n\n"
-        
-        # Add raw prices as quick reference
         price_block = "<b>Watchlist:</b>\n"
         for t, d in prices.items():
             direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
-            price_block += f"{direction} <b>{t}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
+            price_block += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
 
-        full_message = header + price_block + "\n" + briefing
-
-        send_telegram(full_message)
+        send_telegram(header + price_block + "\n" + briefing)
         print(f"[{datetime.now().strftime('%H:%M')}] Morning briefing sent.")
 
     except Exception as e:
@@ -121,17 +128,52 @@ Rules:
         send_telegram(f"❌ Morning briefing error: {str(e)[:200]}")
 
 
-def run_scheduler():
-    """Run the scheduler — sends briefing at 7am GMT on weekdays."""
-    print("📅 Scheduler running...")
-    print("Morning briefing scheduled for 07:00 GMT on weekdays.\n")
+def check_price_alerts():
+    """Check for significant price moves and alert if >5%."""
+    print(f"[{datetime.now().strftime('%H:%M')}] Checking price alerts...")
+    try:
+        from src.tools.prices import get_live_prices
+        from src.tools.notify import send_telegram
 
-    # Schedule weekday briefings at 7am GMT
+        prices = get_live_prices(WATCHLIST)
+        alerts = []
+
+        for ticker, data in prices.items():
+            change = data.get("change_pct") or 0
+            if abs(change) >= 5.0:
+                direction = "📈" if change > 0 else "📉"
+                alerts.append(
+                    f"{direction} <b>{fmt(ticker)}</b>: {change:+.2f}% (${data.get('price')})"
+                )
+
+        if alerts:
+            msg = "🚨 <b>Price Alert — 5%+ Move</b>\n\n"
+            msg += "\n".join(alerts)
+            msg += "\n\n<i>Reply 'deep dive [ticker]' for full analysis.</i>"
+            send_telegram(msg)
+            print(f"[{datetime.now().strftime('%H:%M')}] Sent {len(alerts)} price alerts.")
+        else:
+            print(f"[{datetime.now().strftime('%H:%M')}] No alerts triggered.")
+
+    except Exception as e:
+        print(f"Price alert error: {e}")
+
+
+def run_scheduler():
+    """Run the scheduler."""
+    print("📅 Scheduler running...")
+    print("• Morning briefing: 07:00 GMT weekdays")
+    print("• Price alerts: every 30 mins\n")
+
+    # Morning briefing — weekdays 7am GMT
     schedule.every().monday.at("07:00").do(send_morning_briefing)
     schedule.every().tuesday.at("07:00").do(send_morning_briefing)
     schedule.every().wednesday.at("07:00").do(send_morning_briefing)
     schedule.every().thursday.at("07:00").do(send_morning_briefing)
     schedule.every().friday.at("07:00").do(send_morning_briefing)
+
+    # Price alerts — every 30 minutes
+    schedule.every(30).minutes.do(check_price_alerts)
 
     while True:
         schedule.run_pending()
@@ -139,6 +181,10 @@ def run_scheduler():
 
 
 if __name__ == "__main__":
-    # Test mode — send immediately
-    print("Test mode — sending briefing now...")
-    send_morning_briefing()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "price":
+        print("Testing price alerts...")
+        check_price_alerts()
+    else:
+        print("Testing morning briefing...")
+        send_morning_briefing()
