@@ -3,28 +3,25 @@ import schedule
 import time
 from datetime import datetime
 from dotenv import load_dotenv
+from src.tools.notion_holdings import get_holdings_from_notion, FALLBACK_WATCHLIST
 
 load_dotenv()
 
-WATCHLIST = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG"]
 
-TICKER_NAMES = {
-    "NVDA": "Nvidia",
-    "TSM": "TSMC",
-    "AVGO": "Broadcom",
-    "AMD": "AMD",
-    "ASML": "ASML",
-    "ARM": "Arm Holdings",
-    "ALAB": "Astera Labs",
-    "PLTR": "Palantir",
-    "APP": "Applovin",
-    "CEG": "Constellation Energy",
-}
+def load_watchlist():
+    try:
+        return get_holdings_from_notion()
+    except Exception:
+        return FALLBACK_WATCHLIST
+
+
+WATCHLIST_DATA = load_watchlist()
+WATCHLIST = list(WATCHLIST_DATA.keys())
 
 
 def fmt(ticker: str) -> str:
     t = ticker.upper()
-    name = TICKER_NAMES.get(t)
+    name = WATCHLIST_DATA.get(t, {}).get("name", "")
     return f"{t} ({name})" if name else t
 
 

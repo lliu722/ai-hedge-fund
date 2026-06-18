@@ -8,31 +8,28 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from langchain_deepseek import ChatDeepSeek
+from src.tools.notion_holdings import get_holdings_from_notion, FALLBACK_WATCHLIST
 
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-WATCHLIST = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG"]
 
-TICKER_NAMES = {
-    "NVDA": "Nvidia",
-    "TSM": "TSMC",
-    "AVGO": "Broadcom",
-    "AMD": "AMD",
-    "ASML": "ASML",
-    "ARM": "Arm Holdings",
-    "ALAB": "Astera Labs",
-    "PLTR": "Palantir",
-    "APP": "Applovin",
-    "CEG": "Constellation Energy",
-}
+def load_watchlist():
+    try:
+        return get_holdings_from_notion()
+    except Exception:
+        return FALLBACK_WATCHLIST
+
+
+WATCHLIST = load_watchlist()
+WATCHLIST_TICKERS = list(WATCHLIST.keys())
 
 
 def fmt(ticker: str) -> str:
     t = ticker.upper()
-    name = TICKER_NAMES.get(t)
+    name = WATCHLIST.get(t, {}).get("name", "")
     return f"{t} ({name})" if name else t
 
 
@@ -40,7 +37,7 @@ def fmt(ticker: str) -> str:
 
 SYSTEM_PROMPT = f"""You are an AI investment research assistant specialising in AI infrastructure equity.
 You have access to tools for live prices, news, SEC filings, earnings calendars, deep dive research reports, and portfolio data.
-The user's portfolio focuses on: {", ".join(fmt(t) for t in WATCHLIST)}.
+The user's portfolio focuses on: {", ".join(fmt(t) for t in WATCHLIST_TICKERS)}.
 Always use tools to fetch real data — never make up prices or news.
 
 CRITICAL FORMATTING RULES — follow exactly, no exceptions:
@@ -153,7 +150,7 @@ def get_earnings_calendar() -> str:
     Use when the user asks about earnings, when companies report, or upcoming events.
     """
     from src.tools.earnings_calendar import get_earnings_dates
-    dates = get_earnings_dates(WATCHLIST)
+    dates = get_earnings_dates(WATCHLIST_TICKERS)
     msg = "📅 <b>Earnings Calendar</b>\n\n"
     upcoming = [
         (t, d) for t, d in dates.items()
@@ -175,7 +172,7 @@ def get_portfolio() -> str:
     Use when the user asks about their portfolio, watchlist, holdings, or how stocks are doing.
     """
     from src.tools.prices import get_live_prices
-    prices = get_live_prices(WATCHLIST)
+    prices = get_live_prices(WATCHLIST_TICKERS)
     msg = f"💼 <b>Portfolio Watchlist</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M GMT')}</i>\n\n"
     for t, d in prices.items():
         direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
@@ -190,7 +187,7 @@ def get_market_briefing() -> str:
     """
     from src.tools.news_fetcher import get_macro_news
     from src.tools.prices import get_live_prices
-    prices = get_live_prices(WATCHLIST[:5])
+    prices = get_live_prices(WATCHLIST_TICKERS[:5])
     macro = get_macro_news()
     msg = f"🌅 <b>Market Briefing — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
     msg += "<b>Top Watchlist Moves:</b>\n"
