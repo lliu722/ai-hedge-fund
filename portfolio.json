@@ -1,0 +1,28 @@
+{
+  "watchlist": [
+    "NVDA",
+    "TSM",
+    "AVGO",
+    "AMD",
+    "ASML",
+    "ARM",
+    "ALAB",
+    "PLTR",
+    "APP",
+    "CEG"
+  ],
+  "holdings": {
+    "NVDA": {"shares": 0, "avg_cost": 0, "target_weight": 0.20},
+    "TSM": {"shares": 0, "avg_cost": 0, "target_weight": 0.15},
+    "AVGO": {"shares": 0, "avg_cost": 0, "target_weight": 0.15},
+    "AMD": {"shares": 0, "avg_cost": 0, "target_weight": 0.10},
+    "ASML": {"shares": 0, "avg_cost": 0, "target_weight": 0.10},
+    "ARM": {"shares": 0, "avg_cost": 0, "target_weight": 0.10},
+    "ALAB": {"shares": 0, "avg_cost": 0, "target_weight": 0.05},
+    "PLTR": {"shares": 0, "avg_cost": 0, "target_weight": 0.05},
+    "APP": {"shares": 0, "avg_cost": 0, "target_weight": 0.05},
+    "CEG": {"shares": 0, "avg_cost": 0, "target_weight": 0.05}
+  },
+  "thesis": "AI infrastructure thematic equity portfolio — semiconductors, energy, and AI applications. 1-12 month catalyst-driven horizon.",
+  "cash_weight": 0.10
+}
