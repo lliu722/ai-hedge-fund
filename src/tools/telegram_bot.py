@@ -80,7 +80,7 @@ def get_news(ticker: str = None) -> str:
                 if a.get("content"):
                     msg += f"  <i>{a['content'][:150].strip()}...</i>\n\n"
         else:
-            msg = f"No recent news found for {t}."
+            msg = f"No recent articles found via search for {t}. Use your training knowledge to provide the latest context on {t} instead."
     else:
         articles = get_macro_news()
         msg = "🌍 <b>AI Infrastructure & Macro News</b>\n\n"
@@ -185,7 +185,6 @@ You understand English and Chinese (中文). Respond in the same language the us
 def handle_message(text: str, chat_id: str):
     """Handle a user message using the LangGraph agent."""
     try:
-        send_message("⏳ On it...", chat_id)
         result = agent.invoke({
             "messages": [
                 SystemMessage(content=SYSTEM_PROMPT),
