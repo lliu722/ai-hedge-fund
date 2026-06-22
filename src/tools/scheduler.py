@@ -48,6 +48,8 @@ def send_morning_briefing():
 
         prices_text = ""
         for t, d in prices.items():
+            if not d:
+                continue
             direction = "▲" if (d.get("change_pct") or 0) > 0 else "▼"
             prices_text += f"{direction} {fmt(t)}: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
 
@@ -113,6 +115,8 @@ Rules:
         header = f"🌅 <b>Morning Briefing — {datetime.now().strftime('%A %d %B %Y')}</b>\n\n"
         price_block = "<b>Watchlist:</b>\n"
         for t, d in prices.items():
+            if not d:
+                continue
             direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
             price_block += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
 
@@ -126,25 +130,31 @@ Rules:
 
 
 def check_price_alerts():
-    """Check for significant price moves and alert if >5%."""
+    """Check for 8%+ moves on held positions only."""
     print(f"[{datetime.now().strftime('%H:%M')}] Checking price alerts...")
     try:
         from src.tools.prices import get_live_prices
         from src.tools.notify import send_telegram
 
-        prices = get_live_prices(WATCHLIST)
-        alerts = []
+        # Only alert on names actually held (shares > 0)
+        held = [t for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
+        # Fall back to full watchlist if no positions recorded yet
+        tickers_to_check = held if held else WATCHLIST
+        prices = get_live_prices(tickers_to_check)
 
+        alerts = []
         for ticker, data in prices.items():
+            if not data:
+                continue
             change = data.get("change_pct") or 0
-            if abs(change) >= 5.0:
+            if abs(change) >= 8.0:
                 direction = "📈" if change > 0 else "📉"
                 alerts.append(
                     f"{direction} <b>{fmt(ticker)}</b>: {change:+.2f}% (${data.get('price')})"
                 )
 
         if alerts:
-            msg = "🚨 <b>Price Alert — 5%+ Move</b>\n\n"
+            msg = "🚨 <b>Price Alert — 8%+ Move</b>\n\n"
             msg += "\n".join(alerts)
             msg += "\n\n<i>Reply 'deep dive [ticker]' for full analysis.</i>"
             send_telegram(msg)
@@ -157,13 +167,12 @@ def check_price_alerts():
 
 
 def run_scheduler():
-    """Run the scheduler."""
+    """Run the scheduler — morning briefing at 7am HKT, price alerts every 30 mins."""
     print("📅 Scheduler running...")
     print("• Morning briefing: 07:00 HKT Mon–Fri (23:00 UTC Sun–Thu)")
-    print("• Price alerts: every 30 mins\n")
+    print("• Price alerts: every 30 mins (8%+ moves, held positions only)\n")
 
     # 7am HK time = 23:00 UTC previous day. Railway runs on UTC.
-    # Sunday 23:00 UTC → Monday 07:00 HK, etc.
     schedule.every().sunday.at("23:00").do(send_morning_briefing)
     schedule.every().monday.at("23:00").do(send_morning_briefing)
     schedule.every().tuesday.at("23:00").do(send_morning_briefing)
