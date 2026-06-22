@@ -15,6 +15,10 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Tickers yfinance cannot resolve — skip to avoid slow 404 waits.
+# (HK/crypto/index support to be added later via proper data sources.)
+SKIP_TICKERS = {"— (SECTOR)", ".VIX", "MATIC", "SOL", "BTC", "ETH"}
+
 
 def load_watchlist():
     try:
@@ -24,7 +28,11 @@ def load_watchlist():
 
 
 WATCHLIST = load_watchlist()
-WATCHLIST_TICKERS = list(WATCHLIST.keys())
+# Clean list: drop skip-tickers and anything HK (.HK) that yfinance can't handle yet
+WATCHLIST_TICKERS = [
+    t for t in WATCHLIST.keys()
+    if t not in SKIP_TICKERS and not t.endswith(".HK")
+]
 
 
 def fmt(ticker: str) -> str:
@@ -37,7 +45,6 @@ def fmt(ticker: str) -> str:
 
 SYSTEM_PROMPT = f"""You are an AI investment research assistant specialising in AI infrastructure equity.
 You have access to tools for live prices, news, SEC filings, earnings calendars, deep dive research reports, and portfolio data.
-The user's portfolio focuses on: {", ".join(fmt(t) for t in WATCHLIST_TICKERS)}.
 Always use tools to fetch real data — never make up prices or news.
 
 CRITICAL FORMATTING RULES — follow exactly, no exceptions:
@@ -47,7 +54,7 @@ CRITICAL FORMATTING RULES — follow exactly, no exceptions:
 - NEVER use bullet points with - (use • instead)
 - Use <b>text</b> for bold only
 - Use <i>text</i> for italics only
-- When showing prices or portfolio, show each ticker on its own line: 📈 <b>{fmt("NVDA")}</b>: $204.65 (+1.33%)
+- When showing prices, show each ticker on its own line: 📈 <b>{fmt("NVDA")}</b>: $204.65 (+1.33%)
 - Always show tickers with company names, e.g. {fmt("NVDA")} not just NVDA
 - Keep responses clean — plain text with <b>bold</b> for emphasis
 - ALWAYS respond in English unless the user explicitly writes in Chinese"""
@@ -55,17 +62,15 @@ CRITICAL FORMATTING RULES — follow exactly, no exceptions:
 # ── Telegram Helpers ──────────────────────────────────────────────────────────
 
 def clean_for_telegram(text: str) -> str:
-    """Strip all markdown formatting that breaks Telegram HTML mode."""
-    text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)   # **bold** → <b>bold</b>
-    text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)         # *italic* → <i>italic</i>
-    text = re.sub(r'#{1,6}\s+', '', text)                    # ## headers → removed
-    text = re.sub(r'\|[^\n]+\|', '', text)                   # | tables | → removed
-    text = re.sub(r'-{3,}', '—', text)                       # --- → —
-    text = re.sub(r'\n{3,}', '\n\n', text)                   # triple newlines → double
+    text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
+    text = re.sub(r'#{1,6}\s+', '', text)
+    text = re.sub(r'\|[^\n]+\|', '', text)
+    text = re.sub(r'-{3,}', '—', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
 def send_message(text: str, chat_id: str = None):
-    """Send a message to Telegram, splitting if over 4000 chars."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     cleaned = clean_for_telegram(text)
     chunks = [cleaned[i:i+4000] for i in range(0, len(cleaned), 4000)]
@@ -77,7 +82,6 @@ def send_message(text: str, chat_id: str = None):
         })
 
 def get_updates(offset: int = 0) -> list:
-    """Poll Telegram for new messages."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
     r = requests.get(url, params={"offset": offset, "timeout": 30})
     return r.json().get("result", []) if r.status_code == 200 else []
@@ -173,8 +177,10 @@ def get_portfolio() -> str:
     """
     from src.tools.prices import get_live_prices
     prices = get_live_prices(WATCHLIST_TICKERS)
-    msg = f"💼 <b>Portfolio Watchlist</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M GMT')}</i>\n\n"
+    msg = f"💼 <b>Portfolio Watchlist</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
     for t, d in prices.items():
+        if not d:
+            continue
         direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
         msg += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
     return msg
@@ -192,6 +198,8 @@ def get_market_briefing() -> str:
     msg = f"🌅 <b>Market Briefing — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
     msg += "<b>Top Watchlist Moves:</b>\n"
     for t, d in prices.items():
+        if not d:
+            continue
         direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
         msg += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
     msg += "\n<b>Macro & AI News:</b>\n"
@@ -240,6 +248,19 @@ agent = create_react_agent(llm, tools)
 def handle_message(text: str, chat_id: str):
     """Handle a user message using the LangGraph agent."""
     try:
+        # Manual triggers for testing scheduled jobs on demand
+        lowered = text.strip().lower()
+        if lowered in ("send briefing", "test briefing"):
+            from src.tools.scheduler import send_morning_briefing
+            send_message("⏳ Generating briefing now...", chat_id)
+            send_morning_briefing()
+            return
+        if lowered in ("send alert", "test alert", "check alerts"):
+            from src.tools.scheduler import check_price_alerts
+            send_message("⏳ Checking price alerts now...", chat_id)
+            check_price_alerts()
+            return
+
         send_message("⏳ Working on it...", chat_id)
         result = agent.invoke({
             "messages": [
@@ -256,7 +277,6 @@ def handle_message(text: str, chat_id: str):
 
 def run_bot():
     print("🤖 AI Investor Bot (LangGraph) is running...")
-    print("Press Ctrl+C to stop.\n")
     offset = 0
     while True:
         try:
@@ -278,5 +298,16 @@ def run_bot():
         except Exception as e:
             print(f"Loop error: {e}")
 
+# ── Entry Point ───────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
+    # Start the scheduler in a background thread inside this (always-alive) process
+    try:
+        from src.tools.scheduler import run_scheduler
+        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread.start()
+        print("📅 Scheduler thread started.")
+    except Exception as e:
+        print(f"Could not start scheduler thread: {e}")
+
     run_bot()

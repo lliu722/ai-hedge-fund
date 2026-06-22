@@ -159,17 +159,17 @@ def check_price_alerts():
 def run_scheduler():
     """Run the scheduler."""
     print("📅 Scheduler running...")
-    print("• Morning briefing: 07:00 GMT weekdays")
+    print("• Morning briefing: 07:00 HKT Mon–Fri (23:00 UTC Sun–Thu)")
     print("• Price alerts: every 30 mins\n")
 
-    # Morning briefing — weekdays 7am GMT
-    schedule.every().monday.at("07:00").do(send_morning_briefing)
-    schedule.every().tuesday.at("07:00").do(send_morning_briefing)
-    schedule.every().wednesday.at("07:00").do(send_morning_briefing)
-    schedule.every().thursday.at("07:00").do(send_morning_briefing)
-    schedule.every().friday.at("07:00").do(send_morning_briefing)
+    # 7am HK time = 23:00 UTC previous day. Railway runs on UTC.
+    # Sunday 23:00 UTC → Monday 07:00 HK, etc.
+    schedule.every().sunday.at("23:00").do(send_morning_briefing)
+    schedule.every().monday.at("23:00").do(send_morning_briefing)
+    schedule.every().tuesday.at("23:00").do(send_morning_briefing)
+    schedule.every().wednesday.at("23:00").do(send_morning_briefing)
+    schedule.every().thursday.at("23:00").do(send_morning_briefing)
 
-    # Price alerts — every 30 minutes
     schedule.every(30).minutes.do(check_price_alerts)
 
     while True:
