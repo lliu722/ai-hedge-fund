@@ -4,14 +4,14 @@ import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
-from src.tools.notion_holdings import get_holdings_from_notion, FALLBACK_WATCHLIST
+from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
 
 load_dotenv()
 
 
 def load_watchlist():
     try:
-        return get_holdings_from_notion()
+        return get_holdings_cached()
     except Exception:
         return FALLBACK_WATCHLIST
 
@@ -25,7 +25,7 @@ BRIEFING_TICKERS = [
     "CRDO", "MSFT", "META", "ASTS", "RKLB", "VST", "TLN", "MP", "MSTR", "BTC"
 ]
 
-# Tracks which tickers have already been alerted today — resets automatically at midnight
+# Tracks which tickers have already been alerted today — resets at morning briefing
 _alerted_today = {}
 
 
@@ -33,6 +33,22 @@ def fmt(ticker: str) -> str:
     t = ticker.upper()
     name = WATCHLIST_DATA.get(t, {}).get("name", "")
     return f"{t} ({name})" if name else t
+
+
+def _is_market_open() -> bool:
+    """
+    Check if US market is open.
+    US market hours: Mon-Fri 09:30-16:00 ET = 13:30-20:00 UTC.
+    Returns True if currently within market hours.
+    """
+    now = datetime.utcnow()
+    # Weekend check
+    if now.weekday() >= 5:
+        return False
+    # Market hours: 13:30-20:00 UTC (9:30am-4pm ET)
+    market_open = now.replace(hour=13, minute=30, second=0, microsecond=0)
+    market_close = now.replace(hour=20, minute=0, second=0, microsecond=0)
+    return market_open <= now <= market_close
 
 
 def send_morning_briefing():
@@ -134,7 +150,7 @@ Rules:
         send_telegram(header + price_block + "\n" + briefing)
         print(f"[{datetime.now().strftime('%H:%M')}] Morning briefing sent.")
 
-        # Reset daily alert cache at morning briefing time (start of new trading day)
+        # Reset daily alert cache at start of new trading day
         _alerted_today.clear()
         print(f"[{datetime.now().strftime('%H:%M')}] Daily alert cache cleared.")
 
@@ -145,15 +161,21 @@ Rules:
 
 
 def check_price_alerts():
-    """Check for 8%+ moves — alert once per ticker per day only."""
+    """Check for 8%+ moves — market hours only, once per ticker per day."""
     print(f"[{datetime.now().strftime('%H:%M')}] Checking price alerts...")
+
+    # Only run during US market hours
+    if not _is_market_open():
+        print(f"[{datetime.now().strftime('%H:%M')}] Market closed — skipping alerts.")
+        return
+
     try:
         from src.tools.prices import get_live_prices
         from src.tools.notify import send_telegram
 
         today = datetime.now().strftime("%Y-%m-%d")
 
-        # Only alert on names actually held (shares > 0)
+        # Only alert on names actually held (shares > 0), fall back to full watchlist
         held = [t for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
         tickers_to_check = held if held else WATCHLIST
         prices = get_live_prices(tickers_to_check)
@@ -164,7 +186,6 @@ def check_price_alerts():
                 continue
             change = data.get("change_pct") or 0
             if abs(change) >= 8.0:
-                # Skip if already alerted for this ticker today
                 if _alerted_today.get(ticker) == today:
                     continue
                 direction = "📈" if change > 0 else "📉"
@@ -190,7 +211,7 @@ def run_scheduler():
     """Run the scheduler — morning briefing at 7am HKT, price alerts every 30 mins."""
     print("📅 Scheduler running...")
     print("• Morning briefing: 07:00 HKT Mon–Fri (23:00 UTC Sun–Thu)")
-    print("• Price alerts: every 30 mins (8%+ moves, once per ticker per day)\n")
+    print("• Price alerts: every 30 mins during US market hours, once per ticker per day\n")
 
     # 7am HK time = 23:00 UTC previous day. Railway runs on UTC.
     schedule.every().sunday.at("23:00").do(send_morning_briefing)

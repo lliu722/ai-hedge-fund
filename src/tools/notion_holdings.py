@@ -2,6 +2,7 @@
 Notion Holdings Sync — pulls your live holdings from Notion
 and makes them available as the dynamic watchlist.
 Falls back to hardcoded list if Notion is unavailable.
+Loaded once at module level and cached — shared across all importers.
 """
 
 import os
@@ -25,6 +26,7 @@ FALLBACK_WATCHLIST = {
     "APP": {"name": "Applovin", "sector": "AI-Apps", "role": "Satellite"},
     "CEG": {"name": "Constellation Energy", "sector": "AI-Energy", "role": "Satellite"},
 }
+
 
 def get_holdings_from_notion() -> dict:
     """
@@ -56,7 +58,6 @@ def get_holdings_from_notion() -> dict:
         for page in results:
             props = page.get("properties", {})
 
-            # Extract ticker
             ticker_prop = props.get("Ticker", {})
             ticker = ""
             if ticker_prop.get("type") == "rich_text":
@@ -66,14 +67,12 @@ def get_holdings_from_notion() -> dict:
             if not ticker:
                 continue
 
-            # Extract name
             name_prop = props.get("Name", {})
             name = ""
             if name_prop.get("type") == "title":
                 title = name_prop.get("title", [])
                 name = title[0]["plain_text"].strip() if title else ticker
 
-            # Extract other fields
             sector = props.get("Sector", {}).get("select", {})
             sector = sector.get("name", "") if sector else ""
 
@@ -110,14 +109,24 @@ def get_holdings_from_notion() -> dict:
         return FALLBACK_WATCHLIST
 
 
+# ── Module-level cache — loaded once, shared across all importers ─────────────
+_holdings_cache = None
+
+
+def get_holdings_cached() -> dict:
+    """Return cached holdings — calls Notion once per process, not on every import."""
+    global _holdings_cache
+    if _holdings_cache is None:
+        _holdings_cache = get_holdings_from_notion()
+    return _holdings_cache
+
+
 def get_watchlist_tickers() -> list:
-    """Return just the list of tickers from Notion holdings."""
-    return list(get_holdings_from_notion().keys())
+    return list(get_holdings_cached().keys())
 
 
 def get_ticker_name_map() -> dict:
-    """Return {ticker: name} dict for display formatting."""
-    holdings = get_holdings_from_notion()
+    holdings = get_holdings_cached()
     return {t: d["name"] for t, d in holdings.items()}
 
 

@@ -8,31 +8,23 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from langchain_deepseek import ChatDeepSeek
-from src.tools.notion_holdings import get_holdings_from_notion, FALLBACK_WATCHLIST
+from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
 
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Tickers yfinance cannot resolve — skip to avoid slow 404 waits.
-# (HK/crypto/index support to be added later via proper data sources.)
-SKIP_TICKERS = {"— (SECTOR)", ".VIX", "MATIC", "SOL", "BTC", "ETH"}
-
 
 def load_watchlist():
     try:
-        return get_holdings_from_notion()
+        return get_holdings_cached()
     except Exception:
         return FALLBACK_WATCHLIST
 
 
 WATCHLIST = load_watchlist()
-# Clean list: drop skip-tickers and anything HK (.HK) that yfinance can't handle yet
-WATCHLIST_TICKERS = [
-    t for t in WATCHLIST.keys()
-    if t not in SKIP_TICKERS and not t.endswith(".HK")
-]
+WATCHLIST_TICKERS = list(WATCHLIST.keys())
 
 
 def fmt(ticker: str) -> str:
@@ -246,9 +238,7 @@ agent = create_react_agent(llm, tools)
 # ── Message Handler ───────────────────────────────────────────────────────────
 
 def handle_message(text: str, chat_id: str):
-    """Handle a user message using the LangGraph agent."""
     try:
-        # Manual triggers for testing scheduled jobs on demand
         lowered = text.strip().lower()
         if lowered in ("send briefing", "test briefing"):
             from src.tools.scheduler import send_morning_briefing
@@ -301,7 +291,6 @@ def run_bot():
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    # Start the scheduler in a background thread inside this (always-alive) process
     try:
         from src.tools.scheduler import run_scheduler
         scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
