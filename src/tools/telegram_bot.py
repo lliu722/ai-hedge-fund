@@ -105,7 +105,7 @@ def get_price(ticker: str) -> str:
     Use when the user asks for a price, stock quote, or market data for a specific company.
     """
     from src.tools.prices import get_live_prices
-    data = get_live_prices([ticker.upper()]).get(ticker.upper(), {})
+    data = get_live_prices([ticker.upper()], detailed=True).get(ticker.upper(), {})
     if not data:
         return f"Could not fetch price for {fmt(ticker)}."
     direction = "📈" if (data.get("change_pct") or 0) > 0 else "📉"
