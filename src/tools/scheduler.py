@@ -2,6 +2,7 @@ import os
 import schedule
 import time
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from src.tools.notion_holdings import get_holdings_from_notion, FALLBACK_WATCHLIST
 
@@ -17,6 +18,12 @@ def load_watchlist():
 
 WATCHLIST_DATA = load_watchlist()
 WATCHLIST = list(WATCHLIST_DATA.keys())
+
+# Focused list for morning briefing — fast and relevant
+BRIEFING_TICKERS = [
+    "NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG",
+    "CRDO", "MSFT", "META", "ASTS", "RKLB", "VST", "TLN", "MP", "MSTR", "BTC"
+]
 
 
 def fmt(ticker: str) -> str:
@@ -36,9 +43,15 @@ def send_morning_briefing():
         import requests
 
         DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-        prices = get_live_prices(WATCHLIST)
-        macro = get_macro_news()
-        dates = get_earnings_dates(WATCHLIST)
+
+        # Fetch prices, news, earnings in parallel
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            f_prices = ex.submit(get_live_prices, BRIEFING_TICKERS)
+            f_macro = ex.submit(get_macro_news)
+            f_dates = ex.submit(get_earnings_dates, BRIEFING_TICKERS)
+            prices = f_prices.result()
+            macro = f_macro.result()
+            dates = f_dates.result()
 
         upcoming = [
             (t, d) for t, d in dates.items()
@@ -65,11 +78,6 @@ def send_morning_briefing():
                 earnings_text += f"- {fmt(t)}: reports in {d['days_until']} days ({d['date']})\n"
         else:
             earnings_text = "No earnings in the next 14 days."
-
-        headers = {
-            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-            "Content-Type": "application/json",
-        }
 
         prompt = f"""You are an AI investment research assistant. Write a concise morning briefing for an AI infrastructure equity investor.
 
@@ -98,7 +106,10 @@ Rules:
 
         response = requests.post(
             "https://api.deepseek.com/v1/chat/completions",
-            headers=headers,
+            headers={
+                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+                "Content-Type": "application/json",
+            },
             json={
                 "model": "deepseek-chat",
                 "messages": [{"role": "user", "content": prompt}],
@@ -107,10 +118,7 @@ Rules:
             }
         )
 
-        if response.status_code == 200:
-            briefing = response.json()["choices"][0]["message"]["content"]
-        else:
-            briefing = "Could not generate AI briefing."
+        briefing = response.json()["choices"][0]["message"]["content"] if response.status_code == 200 else "Could not generate AI briefing."
 
         header = f"🌅 <b>Morning Briefing — {datetime.now().strftime('%A %d %B %Y')}</b>\n\n"
         price_block = "<b>Watchlist:</b>\n"
@@ -136,9 +144,7 @@ def check_price_alerts():
         from src.tools.prices import get_live_prices
         from src.tools.notify import send_telegram
 
-        # Only alert on names actually held (shares > 0)
         held = [t for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
-        # Fall back to full watchlist if no positions recorded yet
         tickers_to_check = held if held else WATCHLIST
         prices = get_live_prices(tickers_to_check)
 
@@ -172,7 +178,6 @@ def run_scheduler():
     print("• Morning briefing: 07:00 HKT Mon–Fri (23:00 UTC Sun–Thu)")
     print("• Price alerts: every 30 mins (8%+ moves, held positions only)\n")
 
-    # 7am HK time = 23:00 UTC previous day. Railway runs on UTC.
     schedule.every().sunday.at("23:00").do(send_morning_briefing)
     schedule.every().monday.at("23:00").do(send_morning_briefing)
     schedule.every().tuesday.at("23:00").do(send_morning_briefing)
