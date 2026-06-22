@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import requests
 import threading
 from datetime import datetime
@@ -14,6 +15,20 @@ load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# ── Quick-action button layout ────────────────────────────────────────────────
+MAIN_KEYBOARD = {
+    "inline_keyboard": [
+        [
+            {"text": "💼 Portfolio",  "callback_data": "portfolio"},
+            {"text": "🌅 Briefing",   "callback_data": "briefing"},
+        ],
+        [
+            {"text": "📅 Earnings",   "callback_data": "earnings"},
+            {"text": "🔍 Deep Dive",  "callback_data": "deepdive"},
+        ],
+    ]
+}
 
 
 def load_watchlist():
@@ -62,20 +77,39 @@ def clean_for_telegram(text: str) -> str:
     text = re.sub(r'\n{3,}', '\n\n', text)
     return text.strip()
 
-def send_message(text: str, chat_id: str = None):
+
+def send_message(text: str, chat_id: str = None, show_buttons: bool = True):
+    """Send a message with optional quick-action buttons."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     cleaned = clean_for_telegram(text)
     chunks = [cleaned[i:i+4000] for i in range(0, len(cleaned), 4000)]
-    for chunk in chunks:
-        requests.post(url, json={
+    for i, chunk in enumerate(chunks):
+        payload = {
             "chat_id": chat_id or TELEGRAM_CHAT_ID,
             "text": chunk,
             "parse_mode": "HTML",
-        })
+        }
+        # Only attach buttons to the last chunk
+        if show_buttons and i == len(chunks) - 1:
+            payload["reply_markup"] = json.dumps(MAIN_KEYBOARD)
+        requests.post(url, json=payload)
+
+
+def answer_callback(callback_query_id: str):
+    """Acknowledge a button tap so Telegram stops showing the loading spinner."""
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
+        json={"callback_query_id": callback_query_id}
+    )
+
 
 def get_updates(offset: int = 0) -> list:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-    r = requests.get(url, params={"offset": offset, "timeout": 30})
+    r = requests.get(url, params={
+        "offset": offset,
+        "timeout": 30,
+        "allowed_updates": ["message", "callback_query"]
+    })
     return r.json().get("result", []) if r.status_code == 200 else []
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
@@ -235,23 +269,61 @@ tools = [
 
 agent = create_react_agent(llm, tools)
 
+# ── Button callback handler ───────────────────────────────────────────────────
+
+def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
+    """Handle a button tap."""
+    answer_callback(callback_query_id)
+
+    if callback_data == "portfolio":
+        send_message("⏳ Loading portfolio...", chat_id, show_buttons=False)
+        handle_message("show my portfolio", chat_id)
+
+    elif callback_data == "briefing":
+        send_message("⏳ Generating briefing...", chat_id, show_buttons=False)
+        handle_message("morning briefing", chat_id)
+
+    elif callback_data == "earnings":
+        send_message("⏳ Loading earnings calendar...", chat_id, show_buttons=False)
+        handle_message("any earnings coming up", chat_id)
+
+    elif callback_data == "deepdive":
+        send_message(
+            "🔍 <b>Deep Dive</b>\n\nWhich ticker would you like to research?\n\n"
+            "<i>Just type the ticker symbol, e.g. NVDA or ASML</i>",
+            chat_id,
+            show_buttons=False
+        )
+
 # ── Message Handler ───────────────────────────────────────────────────────────
 
 def handle_message(text: str, chat_id: str):
     try:
         lowered = text.strip().lower()
+
+        # /start command
+        if lowered == "/start":
+            send_message(
+                "🤖 <b>AI Investor — Welcome</b>\n\n"
+                "Your personal AI research analyst. Ask me anything about your portfolio "
+                "or tap a button below to get started.",
+                chat_id
+            )
+            return
+
+        # Manual scheduler triggers
         if lowered in ("send briefing", "test briefing"):
             from src.tools.scheduler import send_morning_briefing
-            send_message("⏳ Generating briefing now...", chat_id)
+            send_message("⏳ Generating briefing now...", chat_id, show_buttons=False)
             send_morning_briefing()
             return
         if lowered in ("send alert", "test alert", "check alerts"):
             from src.tools.scheduler import check_price_alerts
-            send_message("⏳ Checking price alerts now...", chat_id)
+            send_message("⏳ Checking price alerts now...", chat_id, show_buttons=False)
             check_price_alerts()
             return
 
-        send_message("⏳ Working on it...", chat_id)
+        send_message("⏳ Working on it...", chat_id, show_buttons=False)
         result = agent.invoke({
             "messages": [
                 SystemMessage(content=SYSTEM_PROMPT),
@@ -260,6 +332,7 @@ def handle_message(text: str, chat_id: str):
         })
         response = result["messages"][-1].content
         send_message(response, chat_id)
+
     except Exception as e:
         send_message(f"❌ Something went wrong: {str(e)[:200]}", chat_id)
 
@@ -273,6 +346,21 @@ def run_bot():
             updates = get_updates(offset)
             for update in updates:
                 offset = update["update_id"] + 1
+
+                # Handle button taps
+                if "callback_query" in update:
+                    cq = update["callback_query"]
+                    chat_id = str(cq["message"]["chat"]["id"])
+                    callback_data = cq.get("data", "")
+                    callback_query_id = cq["id"]
+                    print(f"[{datetime.now().strftime('%H:%M')}] Button: {callback_data}")
+                    threading.Thread(
+                        target=handle_callback,
+                        args=(callback_data, chat_id, callback_query_id)
+                    ).start()
+                    continue
+
+                # Handle text messages
                 message = update.get("message", {})
                 chat_id = str(message.get("chat", {}).get("id", ""))
                 text = message.get("text", "")
@@ -282,6 +370,7 @@ def run_bot():
                         target=handle_message,
                         args=(text, chat_id)
                     ).start()
+
         except KeyboardInterrupt:
             print("\nBot stopped.")
             break
