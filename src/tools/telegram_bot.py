@@ -339,6 +339,13 @@ def handle_message(text: str, chat_id: str):
             send_weekly_digest()
             return
 
+        if lowered in ("picks", "recommendations", "what should i buy", "stock picks", "ai picks"):
+            from src.tools.recommendations import get_recommendations
+            send_message("⏳ Running AI stock picks — Cathie Wood, Druckenmiller, Damodaran debating...", chat_id, show_buttons=False)
+            result = get_recommendations()
+            send_message(result, chat_id)
+            return
+
         send_message("⏳ Working on it...", chat_id, show_buttons=False)
         result = agent.invoke({
             "messages": [
