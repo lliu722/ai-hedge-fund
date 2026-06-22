@@ -89,7 +89,6 @@ def send_message(text: str, chat_id: str = None, show_buttons: bool = True):
             "text": chunk,
             "parse_mode": "HTML",
         }
-        # Only attach buttons to the last chunk
         if show_buttons and i == len(chunks) - 1:
             payload["reply_markup"] = json.dumps(MAIN_KEYBOARD)
         requests.post(url, json=payload)
@@ -112,6 +111,7 @@ def get_updates(offset: int = 0) -> list:
     })
     return r.json().get("result", []) if r.status_code == 200 else []
 
+
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
 @tool
@@ -123,6 +123,7 @@ def deep_dive(ticker: str) -> str:
     """
     from src.tools.deep_dive import deep_dive as _deep_dive
     return _deep_dive(ticker.upper())
+
 
 @tool
 def get_price(ticker: str) -> str:
@@ -143,6 +144,7 @@ def get_price(ticker: str) -> str:
         f"52w Low: ${data.get('week52_low')}\n"
         f"P/E: {data.get('pe_ratio')}"
     )
+
 
 @tool
 def get_news(ticker: str = None) -> str:
@@ -173,6 +175,7 @@ def get_news(ticker: str = None) -> str:
                 msg += f"  <i>{a['content'][:150].strip()}...</i>\n\n"
         return msg
 
+
 @tool
 def get_earnings_calendar() -> str:
     """
@@ -195,6 +198,7 @@ def get_earnings_calendar() -> str:
         msg += "No upcoming earnings found in next 60 days."
     return msg
 
+
 @tool
 def get_portfolio() -> str:
     """
@@ -210,6 +214,7 @@ def get_portfolio() -> str:
         direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
         msg += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
     return msg
+
 
 @tool
 def get_market_briefing() -> str:
@@ -235,6 +240,7 @@ def get_market_briefing() -> str:
             msg += f"  <i>{a['content'][:150].strip()}...</i>\n\n"
     return msg
 
+
 @tool
 def get_sec_filings(ticker: str) -> str:
     """
@@ -248,6 +254,7 @@ def get_sec_filings(ticker: str) -> str:
     msg += f"• Recent 10-Qs: {', '.join([f['date'] for f in summary['10-Q']]) or 'N/A'}\n"
     msg += f"• Recent 8-Ks: {', '.join([f['date'] for f in summary['8-K']]) or 'N/A'}\n"
     return msg
+
 
 # ── Agent Setup ───────────────────────────────────────────────────────────────
 
@@ -269,7 +276,8 @@ tools = [
 
 agent = create_react_agent(llm, tools)
 
-# ── Button callback handler ───────────────────────────────────────────────────
+
+# ── Button Callback Handler ───────────────────────────────────────────────────
 
 def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
     """Handle a button tap."""
@@ -295,6 +303,7 @@ def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
             show_buttons=False
         )
 
+
 # ── Message Handler ───────────────────────────────────────────────────────────
 
 def handle_message(text: str, chat_id: str):
@@ -317,10 +326,17 @@ def handle_message(text: str, chat_id: str):
             send_message("⏳ Generating briefing now...", chat_id, show_buttons=False)
             send_morning_briefing()
             return
+
         if lowered in ("send alert", "test alert", "check alerts"):
             from src.tools.scheduler import check_price_alerts
             send_message("⏳ Checking price alerts now...", chat_id, show_buttons=False)
             check_price_alerts()
+            return
+
+        if lowered in ("weekly digest", "send digest", "weekly report"):
+            from src.tools.scheduler import send_weekly_digest
+            send_message("⏳ Generating weekly digest...", chat_id, show_buttons=False)
+            send_weekly_digest()
             return
 
         send_message("⏳ Working on it...", chat_id, show_buttons=False)
@@ -336,10 +352,17 @@ def handle_message(text: str, chat_id: str):
     except Exception as e:
         send_message(f"❌ Something went wrong: {str(e)[:200]}", chat_id)
 
+
 # ── Bot Loop ──────────────────────────────────────────────────────────────────
 
 def run_bot():
     print("🤖 AI Investor Bot (LangGraph) is running...")
+    send_message(
+        "🤖 <b>AI Investor is online</b>\n\n"
+        "Your personal research analyst is ready. "
+        "Ask me anything or tap a button below.",
+        show_buttons=True
+    )
     offset = 0
     while True:
         try:
@@ -376,6 +399,7 @@ def run_bot():
             break
         except Exception as e:
             print(f"Loop error: {e}")
+
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
 
