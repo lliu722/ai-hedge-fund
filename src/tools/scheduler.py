@@ -25,6 +25,9 @@ BRIEFING_TICKERS = [
     "CRDO", "MSFT", "META", "ASTS", "RKLB", "VST", "TLN", "MP", "MSTR", "BTC"
 ]
 
+# Tracks which tickers have already been alerted today — resets automatically at midnight
+_alerted_today = {}
+
 
 def fmt(ticker: str) -> str:
     t = ticker.upper()
@@ -131,6 +134,10 @@ Rules:
         send_telegram(header + price_block + "\n" + briefing)
         print(f"[{datetime.now().strftime('%H:%M')}] Morning briefing sent.")
 
+        # Reset daily alert cache at morning briefing time (start of new trading day)
+        _alerted_today.clear()
+        print(f"[{datetime.now().strftime('%H:%M')}] Daily alert cache cleared.")
+
     except Exception as e:
         print(f"Morning briefing error: {e}")
         from src.tools.notify import send_telegram
@@ -138,12 +145,15 @@ Rules:
 
 
 def check_price_alerts():
-    """Check for 8%+ moves on held positions only."""
+    """Check for 8%+ moves — alert once per ticker per day only."""
     print(f"[{datetime.now().strftime('%H:%M')}] Checking price alerts...")
     try:
         from src.tools.prices import get_live_prices
         from src.tools.notify import send_telegram
 
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Only alert on names actually held (shares > 0)
         held = [t for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
         tickers_to_check = held if held else WATCHLIST
         prices = get_live_prices(tickers_to_check)
@@ -154,10 +164,14 @@ def check_price_alerts():
                 continue
             change = data.get("change_pct") or 0
             if abs(change) >= 8.0:
+                # Skip if already alerted for this ticker today
+                if _alerted_today.get(ticker) == today:
+                    continue
                 direction = "📈" if change > 0 else "📉"
                 alerts.append(
                     f"{direction} <b>{fmt(ticker)}</b>: {change:+.2f}% (${data.get('price')})"
                 )
+                _alerted_today[ticker] = today
 
         if alerts:
             msg = "🚨 <b>Price Alert — 8%+ Move</b>\n\n"
@@ -166,7 +180,7 @@ def check_price_alerts():
             send_telegram(msg)
             print(f"[{datetime.now().strftime('%H:%M')}] Sent {len(alerts)} price alerts.")
         else:
-            print(f"[{datetime.now().strftime('%H:%M')}] No alerts triggered.")
+            print(f"[{datetime.now().strftime('%H:%M')}] No new alerts triggered.")
 
     except Exception as e:
         print(f"Price alert error: {e}")
@@ -176,8 +190,9 @@ def run_scheduler():
     """Run the scheduler — morning briefing at 7am HKT, price alerts every 30 mins."""
     print("📅 Scheduler running...")
     print("• Morning briefing: 07:00 HKT Mon–Fri (23:00 UTC Sun–Thu)")
-    print("• Price alerts: every 30 mins (8%+ moves, held positions only)\n")
+    print("• Price alerts: every 30 mins (8%+ moves, once per ticker per day)\n")
 
+    # 7am HK time = 23:00 UTC previous day. Railway runs on UTC.
     schedule.every().sunday.at("23:00").do(send_morning_briefing)
     schedule.every().monday.at("23:00").do(send_morning_briefing)
     schedule.every().tuesday.at("23:00").do(send_morning_briefing)
