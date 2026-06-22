@@ -1,7 +1,7 @@
 import os
 import schedule
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
@@ -28,27 +28,37 @@ BRIEFING_TICKERS = [
 # Tracks which tickers have already been alerted today — resets at morning briefing
 _alerted_today = {}
 
+# ── Market Hours (UTC) ────────────────────────────────────────────────────────
+# Add new markets here as watchlist expands — no other code changes needed
+MARKET_HOURS_UTC = {
+    "Korea":  (0*60+0,   6*60+30),  # 09:00-15:30 KST
+    "HK":     (1*60+30,  8*60+0),   # 09:30-16:00 HKT
+    "China":  (1*60+30,  7*60+0),   # 09:30-15:00 CST
+    "Taiwan": (1*60+0,   5*60+30),  # 09:00-13:30 TST
+    "EU":     (7*60+0,  15*60+30),  # 08:00-16:30 CET (approx)
+    "UK":     (8*60+0,  16*60+30),  # 08:00-16:30 GMT
+    "US":     (13*60+30, 20*60+0),  # 09:30-16:00 ET
+}
+
+
+def _open_markets() -> list:
+    """Return list of currently open market names."""
+    now = datetime.now(timezone.utc)
+    if now.weekday() >= 5:
+        return []
+    time_utc = now.hour * 60 + now.minute
+    return [m for m, (o, c) in MARKET_HOURS_UTC.items() if o <= time_utc <= c]
+
+
+def _is_market_open() -> bool:
+    """Return True if any market is currently open."""
+    return len(_open_markets()) > 0
+
 
 def fmt(ticker: str) -> str:
     t = ticker.upper()
     name = WATCHLIST_DATA.get(t, {}).get("name", "")
     return f"{t} ({name})" if name else t
-
-
-def _is_market_open() -> bool:
-    """
-    Check if US market is open.
-    US market hours: Mon-Fri 09:30-16:00 ET = 13:30-20:00 UTC.
-    Returns True if currently within market hours.
-    """
-    now = datetime.utcnow()
-    # Weekend check
-    if now.weekday() >= 5:
-        return False
-    # Market hours: 13:30-20:00 UTC (9:30am-4pm ET)
-    market_open = now.replace(hour=13, minute=30, second=0, microsecond=0)
-    market_close = now.replace(hour=20, minute=0, second=0, microsecond=0)
-    return market_open <= now <= market_close
 
 
 def send_morning_briefing():
@@ -164,10 +174,11 @@ def check_price_alerts():
     """Check for 8%+ moves — market hours only, once per ticker per day."""
     print(f"[{datetime.now().strftime('%H:%M')}] Checking price alerts...")
 
-    # Only run during US market hours
-    if not _is_market_open():
-        print(f"[{datetime.now().strftime('%H:%M')}] Market closed — skipping alerts.")
+    open_now = _open_markets()
+    if not open_now:
+        print(f"[{datetime.now().strftime('%H:%M')}] All markets closed — skipping alerts.")
         return
+    print(f"[{datetime.now().strftime('%H:%M')}] Open markets: {', '.join(open_now)}")
 
     try:
         from src.tools.prices import get_live_prices
@@ -211,7 +222,7 @@ def run_scheduler():
     """Run the scheduler — morning briefing at 7am HKT, price alerts every 30 mins."""
     print("📅 Scheduler running...")
     print("• Morning briefing: 07:00 HKT Mon–Fri (23:00 UTC Sun–Thu)")
-    print("• Price alerts: every 30 mins during US market hours, once per ticker per day\n")
+    print("• Price alerts: every 30 mins during market hours (HK/China/TW/KR/EU/UK/US)\n")
 
     # 7am HK time = 23:00 UTC previous day. Railway runs on UTC.
     schedule.every().sunday.at("23:00").do(send_morning_briefing)
