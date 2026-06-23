@@ -319,6 +319,16 @@ def get_sec_filings(ticker: str) -> str:
     return msg
 
 
+
+@tool
+def get_ficc_data() -> str:
+    """
+    Get live FICC data: yield curve, credit spreads, policy rates and FX.
+    Use when user asks about rates, bonds, yield curve, credit spreads, dollar, FX, or macro financial conditions.
+    """
+    from src.tools.ficc import get_ficc_message
+    return get_ficc_message()
+
 # ── Agent Setup ───────────────────────────────────────────────────────────────
 
 llm = ChatDeepSeek(
@@ -336,6 +346,7 @@ tools = [
     get_watchlist,
     get_market_briefing,
     get_sec_filings,
+    get_ficc_data,
 ]
 
 memory = MemorySaver()
