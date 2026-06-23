@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import MemorySaver
 from langchain_deepseek import ChatDeepSeek
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
 
@@ -274,7 +275,8 @@ tools = [
     get_sec_filings,
 ]
 
-agent = create_react_agent(llm, tools)
+memory = MemorySaver()
+agent = create_react_agent(llm, tools, checkpointer=memory)
 
 
 # ── Button Callback Handler ───────────────────────────────────────────────────
@@ -347,12 +349,15 @@ def handle_message(text: str, chat_id: str):
             return
 
         send_message("⏳ Working on it...", chat_id, show_buttons=False)
-        result = agent.invoke({
-            "messages": [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=text),
-            ]
-        })
+        result = agent.invoke(
+            {
+                "messages": [
+                    SystemMessage(content=SYSTEM_PROMPT),
+                    HumanMessage(content=text),
+                ]
+            },
+            config={"configurable": {"thread_id": chat_id}}
+        )
         response = result["messages"][-1].content
         send_message(response, chat_id)
 
