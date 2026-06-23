@@ -17,19 +17,8 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# ── Quick-action button layout ────────────────────────────────────────────────
-MAIN_KEYBOARD = {
-    "inline_keyboard": [
-        [
-            {"text": "💼 Portfolio",  "callback_data": "portfolio"},
-            {"text": "🌅 Briefing",   "callback_data": "briefing"},
-        ],
-        [
-            {"text": "📅 Earnings",   "callback_data": "earnings"},
-            {"text": "🔍 Deep Dive",  "callback_data": "deepdive"},
-        ],
-    ]
-}
+# ── Last ticker tracker — {chat_id: "NVDA"} ──────────────────────────────────
+_last_ticker: dict = {}
 
 
 def load_watchlist():
@@ -41,12 +30,56 @@ def load_watchlist():
 
 WATCHLIST = load_watchlist()
 WATCHLIST_TICKERS = list(WATCHLIST.keys())
+WATCHLIST_TICKERS_SET = set(WATCHLIST_TICKERS)
 
 
 def fmt(ticker: str) -> str:
     t = ticker.upper()
     name = WATCHLIST.get(t, {}).get("name", "")
     return f"{t} ({name})" if name else t
+
+
+def build_keyboard(chat_id: str = None) -> dict:
+    """Build inline keyboard — Deep Dive button shows last ticker if known."""
+    last = _last_ticker.get(chat_id) if chat_id else None
+    deep_dive_text = f"🔍 Deep Dive {last}" if last else "🔍 Deep Dive"
+    deep_dive_data = f"deepdive:{last}" if last else "deepdive"
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "💼 Portfolio",  "callback_data": "portfolio"},
+                {"text": "🌅 Briefing",   "callback_data": "briefing"},
+            ],
+            [
+                {"text": "📅 Earnings",   "callback_data": "earnings"},
+                {"text": deep_dive_text,   "callback_data": deep_dive_data},
+            ],
+        ]
+    }
+
+
+def extract_ticker(text: str, chat_id: str = None) -> str | None:
+    """
+    Extract the most prominent ticker mentioned in a response.
+    Cross-references against watchlist. Updates _last_ticker[chat_id].
+    """
+    # Look for bold ticker patterns like <b>NVDA</b> or <b>NVDA (Nvidia)</b>
+    bold_matches = re.findall(r'<b>([A-Z]{1,6})(?:\s|\(|<)', text)
+    for m in bold_matches:
+        if m in WATCHLIST_TICKERS_SET:
+            if chat_id:
+                _last_ticker[chat_id] = m
+            return m
+
+    # Fallback: any uppercase word that matches a watchlist ticker
+    words = re.findall(r'\b([A-Z]{2,6})\b', text)
+    for w in words:
+        if w in WATCHLIST_TICKERS_SET:
+            if chat_id:
+                _last_ticker[chat_id] = w
+            return w
+
+    return None
 
 
 # ── System Prompt ─────────────────────────────────────────────────────────────
@@ -80,7 +113,7 @@ def clean_for_telegram(text: str) -> str:
 
 
 def send_message(text: str, chat_id: str = None, show_buttons: bool = True):
-    """Send a message with optional quick-action buttons."""
+    """Send a message with optional dynamic quick-action buttons."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     cleaned = clean_for_telegram(text)
     chunks = [cleaned[i:i+4000] for i in range(0, len(cleaned), 4000)]
@@ -91,7 +124,7 @@ def send_message(text: str, chat_id: str = None, show_buttons: bool = True):
             "parse_mode": "HTML",
         }
         if show_buttons and i == len(chunks) - 1:
-            payload["reply_markup"] = json.dumps(MAIN_KEYBOARD)
+            payload["reply_markup"] = json.dumps(build_keyboard(chat_id or TELEGRAM_CHAT_ID))
         requests.post(url, json=payload)
 
 
@@ -297,7 +330,14 @@ def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
         send_message("⏳ Loading earnings calendar...", chat_id, show_buttons=False)
         handle_message("any earnings coming up", chat_id)
 
+    elif callback_data.startswith("deepdive:"):
+        # Dynamic: button carries the ticker e.g. "deepdive:NVDA"
+        ticker = callback_data.split(":", 1)[1]
+        send_message(f"⏳ Running deep dive on {ticker}...", chat_id, show_buttons=False)
+        handle_message(f"deep dive {ticker}", chat_id)
+
     elif callback_data == "deepdive":
+        # No ticker tracked yet — ask for one
         send_message(
             "🔍 <b>Deep Dive</b>\n\nWhich ticker would you like to research?\n\n"
             "<i>Just type the ticker symbol, e.g. NVDA or ASML</i>",
@@ -359,6 +399,10 @@ def handle_message(text: str, chat_id: str):
             config={"configurable": {"thread_id": chat_id}}
         )
         response = result["messages"][-1].content
+
+        # Extract ticker from response and update last ticker for this chat
+        extract_ticker(response, chat_id)
+
         send_message(response, chat_id)
 
     except Exception as e:
