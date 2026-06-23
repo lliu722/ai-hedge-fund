@@ -254,6 +254,26 @@ def get_portfolio() -> str:
     return msg
 
 
+
+@tool
+def get_watchlist() -> str:
+    """
+    Show watchlist monitoring names — stocks being watched but not yet held.
+    Use when the user asks about their watchlist, names they are monitoring, or stocks they are watching.
+    """
+    from src.tools.prices import get_live_prices
+    watching = {t: d for t, d in WATCHLIST.items() if (d.get("shares") or 0) == 0}
+    prices = get_live_prices(list(watching.keys()))
+    msg = f"👁 <b>Watchlist — {len(watching)} Moni</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+    for t, d in prices.items():
+        if not d:
+            continue
+        rating = watching.get(t, {}).get("rating", "")
+        direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
+        rating_tag = f" <i>[{rating}]</i>" if rating else ""
+        msg += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%){rating_tag}\n"
+    return msg
+
 @tool
 def get_market_briefing() -> str:
     """
