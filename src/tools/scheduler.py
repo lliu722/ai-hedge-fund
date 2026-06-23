@@ -368,7 +368,9 @@ Rules:
         digest = response.json()["choices"][0]["message"]["content"] if response.status_code == 200 else "Could not generate weekly digest."
 
         header = f"📊 <b>Weekly Digest — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
-        send_telegram(header + digest)
+        from src.tools.recommendations import get_recommendations
+        picks = get_recommendations()
+        send_telegram(header + digest + "\n\n" + picks)
         print(f"[{datetime.now().strftime('%H:%M')}] Weekly digest sent.")
 
     except Exception as e:
