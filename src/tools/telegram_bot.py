@@ -17,9 +17,9 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# ── Last ticker tracker — {chat_id: "NVDA"} ──────────────────────────────────
+# ── State trackers ────────────────────────────────────────────────────────────
 _last_ticker: dict = {}
-_last_response: dict = {}  # stores last bot response for explain button
+_last_response: dict = {}
 
 
 def load_watchlist():
@@ -32,6 +32,10 @@ def load_watchlist():
 WATCHLIST = load_watchlist()
 WATCHLIST_TICKERS = list(WATCHLIST.keys())
 WATCHLIST_TICKERS_SET = set(WATCHLIST_TICKERS)
+
+# Pre-split into held positions and monitoring names
+PORTFOLIO = {t: d for t, d in WATCHLIST.items() if (d.get("shares") or 0) > 0}
+WATCHLIST_ONLY = {t: d for t, d in WATCHLIST.items() if (d.get("shares") or 0) == 0}
 
 
 def fmt(ticker: str) -> str:
@@ -63,26 +67,18 @@ def build_keyboard(chat_id: str = None) -> dict:
 
 
 def extract_ticker(text: str, chat_id: str = None) -> str | None:
-    """
-    Extract the most prominent ticker mentioned in a response.
-    Cross-references against watchlist. Updates _last_ticker[chat_id].
-    """
-    # Look for bold ticker patterns like <b>NVDA</b> or <b>NVDA (Nvidia)</b>
     bold_matches = re.findall(r'<b>([A-Z]{1,6})(?:\s|\(|<)', text)
     for m in bold_matches:
         if m in WATCHLIST_TICKERS_SET:
             if chat_id:
                 _last_ticker[chat_id] = m
             return m
-
-    # Fallback: any uppercase word that matches a watchlist ticker
     words = re.findall(r'\b([A-Z]{2,6})\b', text)
     for w in words:
         if w in WATCHLIST_TICKERS_SET:
             if chat_id:
                 _last_ticker[chat_id] = w
             return w
-
     return None
 
 
@@ -117,7 +113,6 @@ def clean_for_telegram(text: str) -> str:
 
 
 def send_message(text: str, chat_id: str = None, show_buttons: bool = True):
-    """Send a message with optional dynamic quick-action buttons."""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     cleaned = clean_for_telegram(text)
     chunks = [cleaned[i:i+4000] for i in range(0, len(cleaned), 4000)]
@@ -133,7 +128,6 @@ def send_message(text: str, chat_id: str = None, show_buttons: bool = True):
 
 
 def answer_callback(callback_query_id: str):
-    """Acknowledge a button tap so Telegram stops showing the loading spinner."""
     requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
         json={"callback_query_id": callback_query_id}
@@ -187,9 +181,9 @@ def get_price(ticker: str) -> str:
 @tool
 def get_news(ticker: str = None) -> str:
     """
-    Get the latest news for a specific stock ticker or general AI infrastructure macro news.
+    Get the latest news for a specific stock ticker or general macro news.
     Use when the user asks about news, what happened, or latest developments.
-    If no ticker is specified, return macro AI infrastructure news.
+    If no ticker is specified, return macro news.
     """
     from src.tools.news_fetcher import get_news_for_tickers, get_macro_news
     if ticker:
@@ -206,7 +200,7 @@ def get_news(ticker: str = None) -> str:
             return f"No recent search results for {fmt(t)}. Provide a brief summary from your training knowledge about recent {fmt(t)} developments instead."
     else:
         articles = get_macro_news()
-        msg = "🌍 <b>AI Infrastructure & Macro News</b>\n\n"
+        msg = "🌍 <b>Market & Macro News</b>\n\n"
         for a in articles[:5]:
             msg += f"• <b>{a['title']}</b>\n"
             if a.get("content"):
@@ -240,58 +234,69 @@ def get_earnings_calendar() -> str:
 @tool
 def get_portfolio() -> str:
     """
-    Show the current watchlist with live prices and daily percentage moves.
-    Use when the user asks about their portfolio, watchlist, holdings, or how stocks are doing.
+    Show actual held positions with live prices and P&L vs average cost.
+    Use when the user asks about their portfolio, actual holdings, positions with real money, or how their investments are doing.
     """
     from src.tools.prices import get_live_prices
-    prices = get_live_prices(WATCHLIST_TICKERS)
-    msg = f"💼 <b>Portfolio Watchlist</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+    prices = get_live_prices(list(PORTFOLIO.keys()))
+    msg = f"💼 <b>Portfolio — {len(PORTFOLIO)} Held Positions</b>\n"
+    msg += f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+    total_value = 0
     for t, d in prices.items():
         if not d:
             continue
+        shares = PORTFOLIO.get(t, {}).get("shares", 0)
+        avg_cost = PORTFOLIO.get(t, {}).get("avg_cost", 0)
+        price = d.get("price") or 0
+        value = shares * price
+        total_value += value
+        pnl = ((price - avg_cost) / avg_cost * 100) if avg_cost else 0
         direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
-        msg += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
+        msg += f"{direction} <b>{fmt(t)}</b>: ${price} ({d.get('change_pct'):+.2f}%) • P&L: {pnl:+.1f}%\n"
+    if total_value > 0:
+        msg += f"\n<i>Total market value: ${total_value:,.0f}</i>"
     return msg
-
 
 
 @tool
 def get_watchlist() -> str:
     """
     Show watchlist monitoring names — stocks being watched but not yet held.
-    Use when the user asks about their watchlist, names they are monitoring, or stocks they are watching.
+    Use when the user asks about their watchlist, names they are monitoring, or stocks they are watching but haven't bought.
     """
     from src.tools.prices import get_live_prices
-    watching = {t: d for t, d in WATCHLIST.items() if (d.get("shares") or 0) == 0}
-    prices = get_live_prices(list(watching.keys()))
-    msg = f"👁 <b>Watchlist — {len(watching)} Moni</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+    prices = get_live_prices(list(WATCHLIST_ONLY.keys()))
+    msg = f"👁 <b>Watchlist — {len(WATCHLIST_ONLY)} Monitoring</b>\n"
+    msg += f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
     for t, d in prices.items():
         if not d:
             continue
-        rating = watching.get(t, {}).get("rating", "")
+        rating = WATCHLIST_ONLY.get(t, {}).get("rating", "")
         direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
         rating_tag = f" <i>[{rating}]</i>" if rating else ""
         msg += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%){rating_tag}\n"
     return msg
 
+
 @tool
 def get_market_briefing() -> str:
     """
-    Get a market briefing with top watchlist moves and macro news.
+    Get a market briefing with top moves and macro news.
     Use when the user asks about the market, morning briefing, how things are today, or what happened overnight.
     """
     from src.tools.news_fetcher import get_macro_news
     from src.tools.prices import get_live_prices
-    prices = get_live_prices(WATCHLIST_TICKERS[:5])
+    held_tickers = list(PORTFOLIO.keys())[:8]
+    prices = get_live_prices(held_tickers)
     macro = get_macro_news()
     msg = f"🌅 <b>Market Briefing — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
-    msg += "<b>Top Watchlist Moves:</b>\n"
+    msg += "<b>Top Portfolio Moves:</b>\n"
     for t, d in prices.items():
         if not d:
             continue
         direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
         msg += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
-    msg += "\n<b>Macro & AI News:</b>\n"
+    msg += "\n<b>Macro & Market News:</b>\n"
     for a in macro[:3]:
         msg += f"• <b>{a['title']}</b>\n"
         if a.get("content"):
@@ -337,6 +342,44 @@ memory = MemorySaver()
 agent = create_react_agent(llm, tools, checkpointer=memory)
 
 
+# ── Explain Helper ────────────────────────────────────────────────────────────
+
+def _call_explain(last_response: str) -> str:
+    """Call DeepSeek with junior investor educational prompt."""
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    try:
+        r = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "deepseek-chat",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a patient investment teacher explaining things to a junior investor who is still learning. "
+                            "Given the information the bot just showed, explain: "
+                            "(1) what this means in plain English, "
+                            "(2) why it matters for the portfolio, "
+                            "(3) how an experienced portfolio manager would think about and act on this. "
+                            "Be specific, practical, and educational. Use simple language. "
+                            "Format for Telegram using <b>bold</b> for key concepts. Max 250 words."
+                        )
+                    },
+                    {"role": "user", "content": "Please explain this for me:\n\n" + last_response}
+                ],
+                "max_tokens": 400,
+                "temperature": 0.4,
+            },
+            timeout=30,
+        )
+        if r.status_code == 200:
+            return r.json()["choices"][0]["message"]["content"]
+        return "Could not generate explanation."
+    except Exception as e:
+        return f"Explanation error: {str(e)[:100]}"
+
+
 # ── Button Callback Handler ───────────────────────────────────────────────────
 
 def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
@@ -356,18 +399,31 @@ def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
         handle_message("any earnings coming up", chat_id)
 
     elif callback_data.startswith("deepdive:"):
-        # Dynamic: button carries the ticker e.g. "deepdive:NVDA"
         ticker = callback_data.split(":", 1)[1]
         send_message(f"⏳ Running deep dive on {ticker}...", chat_id, show_buttons=False)
         handle_message(f"deep dive {ticker}", chat_id)
 
     elif callback_data == "deepdive":
-        # No ticker tracked yet — ask for one
         send_message(
             "🔍 <b>Deep Dive</b>\n\nWhich ticker would you like to research?\n\n"
             "<i>Just type the ticker symbol, e.g. NVDA or ASML</i>",
             chat_id,
             show_buttons=False
+        )
+
+    elif callback_data == "explain":
+        last = _last_response.get(chat_id)
+        if not last:
+            send_message(
+                "No recent response to explain — ask me something first!",
+                chat_id, show_buttons=False
+            )
+            return
+        send_message("🎓 Explaining...", chat_id, show_buttons=False)
+        explanation = _call_explain(last)
+        send_message(
+            "🎓 <b>Junior Investor Guide</b>\n\n" + explanation,
+            chat_id, show_buttons=False
         )
 
 
@@ -377,7 +433,6 @@ def handle_message(text: str, chat_id: str):
     try:
         lowered = text.strip().lower()
 
-        # /start command
         if lowered == "/start":
             send_message(
                 "🤖 <b>AI Investor — Welcome</b>\n\n"
@@ -387,7 +442,6 @@ def handle_message(text: str, chat_id: str):
             )
             return
 
-        # Manual scheduler triggers
         if lowered in ("send briefing", "test briefing"):
             from src.tools.scheduler import send_morning_briefing
             send_message("⏳ Generating briefing now...", chat_id, show_buttons=False)
@@ -408,7 +462,10 @@ def handle_message(text: str, chat_id: str):
 
         if lowered in ("picks", "recommendations", "what should i buy", "stock picks", "ai picks"):
             from src.tools.recommendations import get_recommendations
-            send_message("⏳ Running AI stock picks — Cathie Wood, Druckenmiller, Damodaran debating...", chat_id, show_buttons=False)
+            send_message(
+                "⏳ Running AI stock picks — Cathie Wood, Druckenmiller, Damodaran debating...",
+                chat_id, show_buttons=False
+            )
             result = get_recommendations()
             send_message(result, chat_id)
             return
@@ -425,7 +482,7 @@ def handle_message(text: str, chat_id: str):
         )
         response = result["messages"][-1].content
 
-        # Extract ticker and store response for explain button
+        # Track ticker and store response for explain button
         extract_ticker(response, chat_id)
         _last_response[chat_id] = response
 
@@ -452,7 +509,6 @@ def run_bot():
             for update in updates:
                 offset = update["update_id"] + 1
 
-                # Handle button taps
                 if "callback_query" in update:
                     cq = update["callback_query"]
                     chat_id = str(cq["message"]["chat"]["id"])
@@ -465,7 +521,6 @@ def run_bot():
                     ).start()
                     continue
 
-                # Handle text messages
                 message = update.get("message", {})
                 chat_id = str(message.get("chat", {}).get("id", ""))
                 text = message.get("text", "")
