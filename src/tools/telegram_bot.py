@@ -19,6 +19,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # ── Last ticker tracker — {chat_id: "NVDA"} ──────────────────────────────────
 _last_ticker: dict = {}
+_last_response: dict = {}  # stores last bot response for explain button
 
 
 def load_watchlist():
@@ -54,6 +55,9 @@ def build_keyboard(chat_id: str = None) -> dict:
                 {"text": "📅 Earnings",   "callback_data": "earnings"},
                 {"text": deep_dive_text,   "callback_data": deep_dive_data},
             ],
+            [
+                {"text": "🎓 Explain this", "callback_data": "explain"},
+            ],
         ]
     }
 
@@ -84,7 +88,7 @@ def extract_ticker(text: str, chat_id: str = None) -> str | None:
 
 # ── System Prompt ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = f"""You are an AI investment research assistant specialising in AI infrastructure equity.
+SYSTEM_PROMPT = f"""You are an AI investment research assistant covering equities, FICC, commodities and crypto as a multi-asset portfolio manager. Current primary theme: AI infrastructure.
 You have access to tools for live prices, news, SEC filings, earnings calendars, deep dive research reports, and portfolio data.
 Always use tools to fetch real data — never make up prices or news.
 
@@ -304,6 +308,7 @@ tools = [
     get_news,
     get_earnings_calendar,
     get_portfolio,
+    get_watchlist,
     get_market_briefing,
     get_sec_filings,
 ]
@@ -400,8 +405,9 @@ def handle_message(text: str, chat_id: str):
         )
         response = result["messages"][-1].content
 
-        # Extract ticker from response and update last ticker for this chat
+        # Extract ticker and store response for explain button
         extract_ticker(response, chat_id)
+        _last_response[chat_id] = response
 
         send_message(response, chat_id)
 
