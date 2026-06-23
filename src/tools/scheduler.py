@@ -33,6 +33,12 @@ MACRO_TICKERS = {
     "USO":      "Oil",
     "DX-Y.NYB": "US Dollar",
     "BTC-USD":  "Bitcoin",
+    "GC=F":    "Gold",
+    "CL=F":    "WTI Oil",
+    "BZ=F":    "Brent Oil",
+    "HG=F":    "Copper",
+    "NG=F":    "Natural Gas",
+    "SI=F":    "Silver",
     "TLT":      "20Y Treasuries",
     "^VIX":     "Volatility (VIX)",
 }
