@@ -327,6 +327,17 @@ llm = ChatDeepSeek(
     temperature=0.3,
 )
 
+@tool
+def get_ficc_data() -> str:
+    """
+    Get live FICC data: US yield curve, credit spreads, policy rates, and key FX pairs.
+    Use when the user asks about interest rates, bonds, the yield curve, credit spreads,
+    the dollar, FX rates, or macro financial conditions.
+    """
+    from src.tools.ficc import get_ficc_message
+    return get_ficc_message()
+
+
 tools = [
     deep_dive,
     get_price,
@@ -336,6 +347,7 @@ tools = [
     get_watchlist,
     get_market_briefing,
     get_sec_filings,
+    get_ficc_data,
 ]
 
 memory = MemorySaver()

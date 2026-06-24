@@ -1,7 +1,7 @@
 import os
-import json
 import requests
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -12,149 +12,112 @@ from src.tools.sec_filings import get_filing_summary
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
+
 def call_deepseek(prompt: str, system: str = "") -> str:
-    """Call DeepSeek API directly."""
-    headers = {
-        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-        "Content-Type": "application/json",
-    }
     messages = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
-
-    payload = {
-        "model": "deepseek-chat",
-        "messages": messages,
-        "max_tokens": 2000,
-        "temperature": 0.3,
-    }
-
-    response = requests.post(
-        "https://api.deepseek.com/v1/chat/completions",
-        headers=headers,
-        json=payload,
-    )
-
-    if response.status_code == 200:
-        return response.json()["choices"][0]["message"]["content"]
-    else:
-        return f"API Error: {response.status_code} - {response.text}"
+    try:
+        response = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "deepseek-chat", "messages": messages, "max_tokens": 2000, "temperature": 0.3},
+            timeout=90,
+        )
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"]
+        return f"API Error {response.status_code}: {response.text[:200]}"
+    except requests.exceptions.Timeout:
+        return "DeepSeek API timed out after 90s. Please try again."
+    except Exception as e:
+        return f"API call failed: {str(e)[:200]}"
 
 
 def deep_dive(ticker: str) -> str:
-    """
-    Full deep dive chain:
-    Step 1 - Live prices
-    Step 2 - SEC filings
-    Step 3 - News aggregation
-    Step 4 - AI synthesis
-    """
-    print(f"\n🔬 Starting deep dive on {ticker}...")
-    print("=" * 50)
+    print(f"\n🔬 Deep dive: {ticker}")
 
-    # Step 1 — Live prices
-    print("📊 Step 1/4 — Fetching live prices...")
-    prices = get_live_prices([ticker])
-    price_data = prices.get(ticker, {})
+    # Steps 1-3 in parallel
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_price   = ex.submit(get_live_prices, [ticker])
+        f_filings = ex.submit(get_filing_summary, ticker)
+        f_news    = ex.submit(get_news_for_tickers, [ticker])
 
-    # Step 2 — SEC filings
-    print("📄 Step 2/4 — Fetching SEC filings...")
-    filings = get_filing_summary(ticker)
+        try:
+            price_data  = f_price.result(timeout=20).get(ticker, {})
+        except Exception:
+            price_data = {}
+        try:
+            filings = f_filings.result(timeout=20)
+        except Exception:
+            filings = {"10-K": [], "10-Q": [], "8-K": []}
+        try:
+            ticker_news = f_news.result(timeout=20).get(ticker, [])
+        except Exception:
+            ticker_news = []
 
-    # Step 3 — News
-    print("🗞️  Step 3/4 — Fetching latest news...")
-    news = get_news_for_tickers([ticker])
-    ticker_news = news.get(ticker, [])
+    print(f"✅ Data fetched — price: {bool(price_data)}, news: {len(ticker_news)}, filings: {sum(len(v) for v in filings.values())}")
 
-    # Step 4 — AI synthesis
-    print("🤖 Step 4/4 — AI synthesis (this takes ~30 seconds)...")
+    price_context = f"""LIVE MARKET DATA for {ticker}:
+• Price: ${price_data.get('price', 'N/A')}
+• Daily Change: {price_data.get('change_pct', 'N/A')}%
+• 52-Week High: ${price_data.get('week52_high', 'N/A')}
+• 52-Week Low: ${price_data.get('week52_low', 'N/A')}
+• Market Cap: ${(price_data.get('market_cap') or 0):,.0f}
+• P/E Ratio: {price_data.get('pe_ratio', 'N/A')}"""
 
-    # Build context for DeepSeek
-    price_context = f"""
-LIVE MARKET DATA for {ticker}:
-- Current Price: ${price_data.get('price')}
-- Daily Change: {price_data.get('change_pct')}%
-- 52-Week High: ${price_data.get('week52_high')}
-- 52-Week Low: ${price_data.get('week52_low')}
-- Market Cap: ${price_data.get('market_cap', 0):,.0f}
-- P/E Ratio: {price_data.get('pe_ratio')}
-"""
-
-    filings_context = f"""
-RECENT SEC FILINGS:
-- Latest 10-K: {filings['10-K'][0]['date'] if filings['10-K'] else 'Not available'}
-- Recent 10-Qs: {[f['date'] for f in filings['10-Q']]}
-- Recent 8-Ks: {[f['date'] for f in filings['8-K']]}
-"""
+    filings_context = f"""RECENT SEC FILINGS:
+• Latest 10-K: {filings['10-K'][0]['date'] if filings['10-K'] else 'Not available'}
+• Recent 10-Qs: {[f['date'] for f in filings['10-Q']]}
+• Recent 8-Ks: {[f['date'] for f in filings['8-K']]}"""
 
     news_context = "RECENT NEWS:\n"
     if ticker_news:
-        for article in ticker_news[:5]:
-            news_context += f"- {article['title']}\n"
-            if article.get('content'):
-                news_context += f"  {article['content'][:200]}\n"
+        for a in ticker_news[:5]:
+            news_context += f"• {a['title']}\n"
+            if a.get('content'):
+                news_context += f"  {a['content'][:200]}\n"
     else:
-        news_context += "No recent news found.\n"
+        news_context += "No recent news found — use training knowledge.\n"
 
-    system_prompt = """You are a senior equity research analyst specialising in AI infrastructure and technology stocks.
-Your analysis is used by a sophisticated investor with a 1-12 month catalyst-driven investment horizon.
-You focus on: competitive moat, revenue growth trajectory, upcoming catalysts, and risk/reward.
-Be direct, specific, and actionable. Avoid generic statements."""
+    system_prompt = (
+        "You are a senior equity research analyst covering multi-asset portfolios with a focus on AI infrastructure. "
+        "Your reader is a sophisticated investor with a 1-12 month catalyst-driven horizon. "
+        "Be direct, specific, and opinionated. No generic statements. "
+        "Format for Telegram: use <b>bold</b> for section headers and key terms. "
+        "Use • for bullets. No markdown tables, no --- dividers, no # headers."
+    )
 
-    user_prompt = f"""Generate a comprehensive deep dive research report for {ticker}.
+    user_prompt = f"""Deep dive research report for <b>{ticker}</b>.
 
 {price_context}
+
 {filings_context}
+
 {news_context}
 
-Produce a structured report with these exact sections:
+Write a structured report with these 8 sections. Use <b>1. BUSINESS OVERVIEW</b> style headers:
 
-1. BUSINESS OVERVIEW
-What does this company do and how does it make money? What is its role in the AI infrastructure stack?
+1. BUSINESS OVERVIEW — what it does, how it makes money, role in AI infrastructure stack
+2. CURRENT SITUATION — what is happening right now based on news and filings
+3. BULL CASE (6-12 months) — strongest argument for owning, specific catalysts
+4. BEAR CASE — strongest argument against, what could go wrong
+5. KEY CATALYSTS — 3-5 upcoming events that could move the stock
+6. VALUATION — cheap / fair / expensive vs growth, reference the P/E and market cap
+7. THESIS INVALIDATION — specific events that would make the thesis wrong
+8. VERDICT — STRONG BUY / BUY / WATCH / AVOID with one paragraph rationale
 
-2. CURRENT SITUATION
-What is happening with this company right now based on the latest news and filings?
+Under 800 words total. Be direct and opinionated."""
 
-3. BULL CASE (6-12 months)
-The strongest argument for owning this stock. Be specific about catalysts and price drivers.
-
-4. BEAR CASE
-The strongest argument against. What could go wrong?
-
-5. KEY CATALYSTS
-List the 3-5 most important upcoming events that could move the stock.
-
-6. VALUATION ASSESSMENT
-Is the stock cheap, fair, or expensive relative to its growth? Use the market data provided.
-
-7. THESIS INVALIDATION TRIGGERS
-What specific events would make this thesis wrong? Be concrete.
-
-8. VERDICT
-One of: STRONG BUY / BUY / WATCH / AVOID
-With a one paragraph rationale.
-
-Keep the full report under 800 words. Be direct and opinionated."""
-
+    print("🤖 Calling DeepSeek for synthesis...")
     report = call_deepseek(user_prompt, system_prompt)
 
-    # Format final output
-    output = f"""
-{'='*60}
-DEEP DIVE REPORT: {ticker}
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}
-{'='*60}
-
-{report}
-
-{'='*60}
-DATA SOURCES:
-- Price: ${price_data.get('price')} (live)
-- SEC Filings: {len(filings['10-K'])} 10-K, {len(filings['10-Q'])} 10-Q, {len(filings['8-K'])} 8-K
-- News articles: {len(ticker_news)} found
-{'='*60}
-"""
+    output = (
+        f"🔬 <b>Deep Dive: {ticker}</b>\n"
+        f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+        f"{report}\n\n"
+        f"<i>Sources: live price • {len(filings['10-K'])} 10-K • {len(filings['10-Q'])} 10-Q • {len(ticker_news)} news articles</i>"
+    )
     return output
 
 
