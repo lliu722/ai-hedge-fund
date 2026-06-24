@@ -640,9 +640,18 @@ def handle_message(text: str, chat_id: str):
 
         if _reload_match:
             from src.tools.notion_holdings import reload_holdings
-            from src.tools.bot_helpers import load_watchlist
-            reload_holdings()
-            send_message("✅ Holdings reloaded from Notion. Restart bot to reflect in agent memory.", chat_id)
+            new_data = reload_holdings()
+            # Update all module-level dicts in-place so agent sees fresh data immediately
+            WATCHLIST.clear(); WATCHLIST.update(new_data)
+            WATCHLIST_TICKERS[:] = list(new_data.keys())
+            WATCHLIST_TICKERS_SET.clear(); WATCHLIST_TICKERS_SET.update(WATCHLIST_TICKERS)
+            PORTFOLIO.clear(); PORTFOLIO.update({t: d for t, d in new_data.items() if (d.get("shares") or 0) > 0})
+            WATCHLIST_ONLY.clear(); WATCHLIST_ONLY.update({t: d for t, d in new_data.items() if (d.get("shares") or 0) == 0})
+            send_message(
+                f"✅ Holdings reloaded from Notion.\n"
+                f"<b>{len(PORTFOLIO)}</b> held positions · <b>{len(WATCHLIST_ONLY)}</b> watchlist",
+                chat_id
+            )
             return
 
         # ── End write-back commands ────────────────────────────────────────────
