@@ -461,9 +461,10 @@ def handle_message(text: str, chat_id: str):
             return
 
         if lowered in ("send alert", "test alert", "check alerts"):
-            from src.tools.scheduler import check_price_alerts
-            send_message("⏳ Checking price alerts now...", chat_id, show_buttons=False)
-            check_price_alerts()
+            from src.tools.scheduler import check_alerts_report
+            send_message("⏳ Checking price alerts...", chat_id, show_buttons=False)
+            result = check_alerts_report()
+            send_message(result, chat_id)
             return
 
         if lowered in ("weekly digest", "send digest", "weekly report"):

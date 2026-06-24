@@ -434,6 +434,56 @@ def check_price_alerts():
         print(f"Price alert error: {e}")
 
 
+# ── On-Demand Alert Check ─────────────────────────────────────────────────────
+
+def check_alerts_report() -> str:
+    """On-demand version of price alerts — always returns a summary with top movers."""
+    try:
+        from src.tools.prices import get_live_prices
+        today = datetime.now().strftime("%Y-%m-%d")
+        held = [t for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
+        tickers = held if held else WATCHLIST
+        prices = get_live_prices(tickers)
+
+        moves = []
+        alerts = []
+        for ticker, data in prices.items():
+            if not data or data.get("change_pct") is None:
+                continue
+            change = data.get("change_pct") or 0
+            moves.append((ticker, change, data.get("price")))
+            if abs(change) >= 8.0:
+                already = _alerted_today.get(ticker) == today
+                direction = "📈" if change > 0 else "📉"
+                tag = " <i>(already alerted)</i>" if already else ""
+                alerts.append(f"{direction} <b>{fmt(ticker)}</b>: {change:+.2f}% (${data.get('price')}){tag}")
+                if not already:
+                    _alerted_today[ticker] = today
+
+        moves.sort(key=lambda x: abs(x[1]), reverse=True)
+        top = moves[:8]
+
+        msg = f"🔍 <b>Alert Check — {len(tickers)} held positions</b>\n"
+        msg += f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+
+        if alerts:
+            msg += "🚨 <b>8%+ Moves:</b>\n"
+            msg += "\n".join(alerts) + "\n\n"
+
+        msg += "<b>Top Movers Today:</b>\n"
+        for ticker, change, price in top:
+            direction = "📈" if change > 0 else "📉"
+            msg += f"{direction} <b>{fmt(ticker)}</b>: {change:+.2f}% (${price})\n"
+
+        if not alerts:
+            msg += "\n<i>No positions above 8% threshold.</i>"
+
+        return msg
+
+    except Exception as e:
+        return f"❌ Alert check error: {str(e)[:200]}"
+
+
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
 def run_scheduler():
