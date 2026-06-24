@@ -17,7 +17,7 @@ Current theme: AI infrastructure. System is theme-agnostic.
 GitHub: github.com/lliu722/ai-hedge-fund
 
 ## File structure (src/tools/)
-- telegram_bot.py — agent setup, callbacks, handle_message, bot loop. 21 tools registered.
+- telegram_bot.py — agent setup, callbacks, handle_message, bot loop. 36 tools registered.
 - notion_holdings.py — Notion Holdings DB sync + write-back (add, buy, sell, rate, journal)
 - scheduler.py — 7am briefing, Sunday digest, 2hr news alerts, US/HK/EU close alerts
 - recommendations.py — Cathie Wood + Druckenmiller + Damodaran + Li Wei (HK/China) personas
@@ -45,7 +45,7 @@ GitHub: github.com/lliu722/ai-hedge-fund
 git add src/tools/telegram_bot.py [other files] && git commit -m "..." && git push origin main
 
 ## Current state (as of 2026-06-24)
-- 34 tools registered in agent
+- 36 tools registered in agent
 - 41 held positions (shares > 0) — portfolio with dollar P&L
 - 57 watchlist names (shares = 0) — monitoring only
 - 98 total in Notion Holdings DB
@@ -102,12 +102,10 @@ If any of the 3 steps is skipped, the deployment is not complete.
 - Macro regime detector — get_macro_regime() using FRED yield curve + HY OAS + Fed Funds → RISK-ON/RISK-OFF/EASING/STAGFLATION/LATE CYCLE
 - Multi-portfolio support — Account field in Notion, set_active_account filter, switch_account + list_portfolios tools
 - Market open alerts — HK 9:20am HKT + US 9:20am ET Mon–Fri; pre-market movers, earnings today, economic calendar; get_market_open_brief @tool on-demand
-
-## Current state (as of 2026-06-24)
-- 34 tools registered in agent
+- Auto-log earnings from transcript — DeepSeek extracts beat/miss + surprise %s after every get_earnings_transcript call
+- Sizing hints in open alert — >3% pre-market move shows $5k/$10k share count inline
+- Watchlist price targets — `target MRVL below 60`; fires when price crosses; check_watchlist_targets in 30-min loop
+- Weekly theme health score — 0–10 per theme (momentum + breadth) in Sunday digest + get_theme_health @tool
 
 ## Next to build
-1. Breaking news alerts (Issue #3)
-2. Market close alerts + post-market advice (Issues #6 + #7)
-3. Notion write-back from bot (additional fields)
-4. Portfolio advisor enhancements
+(awaiting next direction)
