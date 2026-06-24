@@ -262,6 +262,30 @@ def update_rating(ticker: str, rating: str) -> str:
         return f"❌ Error: {str(e)[:100]}"
 
 
+def update_thesis(ticker: str, thesis: str) -> str:
+    """Update the Thesis (Durable) field for a ticker in the Holdings DB."""
+    ticker = ticker.upper()
+    if not NOTION_API_KEY:
+        return "❌ NOTION_API_KEY not set."
+    if not thesis.strip():
+        return "❌ Thesis text is empty."
+    try:
+        page_id = _find_page_id(ticker)
+        if not page_id:
+            return f"❌ {ticker} not found in Notion."
+        r = requests.patch(
+            f"https://api.notion.com/v1/pages/{page_id}",
+            headers=_notion_headers(),
+            json={"properties": {"Thesis (Durable)": {"rich_text": [{"text": {"content": thesis.strip()[:2000]}}]}}},
+        )
+        if r.status_code == 200:
+            reload_holdings()
+            return f"✅ <b>{ticker}</b> thesis updated in Notion."
+        return f"❌ Notion error {r.status_code}: {r.text[:100]}"
+    except Exception as e:
+        return f"❌ Error: {str(e)[:100]}"
+
+
 def sell_position(ticker: str) -> str:
     """Set shares to 0 — moves ticker from portfolio to watchlist."""
     ticker = ticker.upper()

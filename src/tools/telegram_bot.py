@@ -172,7 +172,13 @@ def get_updates(offset: int = 0) -> list:
 def deep_dive(ticker: str) -> str:
     """Full AI research report: bull/bear case, catalysts, valuation, verdict. Use for 'deep dive', 'analyse', 'research X'."""
     from src.tools.deep_dive import deep_dive as _deep_dive
-    return _deep_dive(ticker.upper())
+    result = _deep_dive(ticker.upper())
+    try:
+        from src.tools.research_library import save_research
+        save_research(ticker.upper(), "deep_dive", result)
+    except Exception:
+        pass
+    return result
 
 
 @tool
@@ -637,7 +643,13 @@ def get_earnings_transcript(ticker: str) -> str:
         )
         if r.status_code == 200:
             analysis = r.json()["choices"][0]["message"]["content"].strip()
-            return f"📞 <b>Earnings Call: {fmt(ticker)}</b>\n\n{analysis}"
+            result = f"📞 <b>Earnings Call: {fmt(ticker)}</b>\n\n{analysis}"
+            try:
+                from src.tools.research_library import save_research
+                save_research(ticker, "earnings", result)
+            except Exception:
+                pass
+            return result
         return f"❌ API error {r.status_code}"
     except Exception as e:
         return f"❌ Error: {str(e)[:150]}"
@@ -648,6 +660,128 @@ def update_rating(ticker: str, rating: str) -> str:
     """Update Notion rating for a ticker. Valid: Buy, Spec. Buy, Allocate, Hold, Watchlist, Researching, Sell."""
     from src.tools.notion_holdings import update_rating as _update_rating
     return _update_rating(ticker.upper(), rating)
+
+
+@tool
+def size_position(ticker: str, conviction: str = "medium") -> str:
+    """
+    Position sizing calculator: given a ticker and conviction level, returns recommended
+    $ amount, share count, and % of portfolio using fixed-fractional sizing.
+    conviction: 'high' (3-5%), 'medium' (1.5-3%), 'low' (0.5-1.5%).
+    Use when user asks 'how much should I buy', 'how many shares of X', 'what size for X'.
+    """
+    from src.tools.prices import get_live_prices
+    from src.tools.notion_holdings import get_holdings_cached
+
+    ticker = ticker.upper()
+    conv = conviction.lower().strip()
+
+    holdings = get_holdings_cached()
+    held = {t: d for t, d in holdings.items() if (d.get("shares") or 0) > 0}
+    prices = get_live_prices(list(held.keys()) + ([ticker] if ticker not in held else []))
+
+    # Portfolio value
+    total_value = sum(
+        (prices.get(t, {}).get("price") or 0) * (d.get("shares") or 0)
+        for t, d in held.items()
+    )
+    if total_value == 0:
+        return "❌ Could not calculate portfolio value — no price data."
+
+    # Existing position size
+    existing_shares = holdings.get(ticker, {}).get("shares") or 0
+    cand_price = prices.get(ticker, {}).get("price") or 0
+    existing_value = existing_shares * cand_price
+    existing_pct = existing_value / total_value * 100 if total_value else 0
+
+    # Fixed-fractional bands by conviction
+    bands = {
+        "high":   (0.03, 0.05),
+        "medium": (0.015, 0.03),
+        "low":    (0.005, 0.015),
+    }
+    low_pct, high_pct = bands.get(conv, bands["medium"])
+
+    # Remaining room (headroom to max band)
+    headroom_pct = max(0, high_pct - existing_pct / 100)
+    low_add  = total_value * low_pct
+    high_add = total_value * high_pct
+    target_add = total_value * (low_pct + high_pct) / 2
+
+    if cand_price <= 0:
+        return f"❌ Could not fetch price for {ticker}."
+
+    low_shares  = int(low_add / cand_price)
+    high_shares = int(high_add / cand_price)
+    mid_shares  = int(target_add / cand_price)
+
+    # Rating and thesis from Notion
+    info = holdings.get(ticker, {})
+    rating = info.get("rating", "Not rated")
+    thesis_text = info.get("thesis", "")
+
+    conv_label = {"high": "High conviction (3–5%)", "medium": "Medium conviction (1.5–3%)", "low": "Low conviction (0.5–1.5%)"}.get(conv, conv)
+
+    msg = f"📐 <b>Position Sizing: {fmt(ticker)}</b>\n"
+    msg += f"<i>Portfolio: ${total_value:,.0f} · Price: ${cand_price} · Conviction: {conv_label}</i>\n\n"
+
+    if existing_value > 0:
+        msg += f"<b>Existing position:</b> {existing_shares:.0f} shares = ${existing_value:,.0f} ({existing_pct:.1f}% of portfolio)\n\n"
+
+    msg += f"<b>Recommended add:</b>\n"
+    msg += f"• Target: <b>{mid_shares} shares</b> ≈ <b>${target_add:,.0f}</b> ({(low_pct+high_pct)/2*100:.1f}% of portfolio)\n"
+    msg += f"• Range: {low_shares}–{high_shares} shares (${low_add:,.0f}–${high_add:,.0f})\n\n"
+
+    if existing_value > 0:
+        new_total_pct = (existing_value + target_add) / total_value * 100
+        msg += f"<b>After add:</b> {new_total_pct:.1f}% of portfolio in {ticker}\n"
+        if new_total_pct > 10:
+            msg += f"⚠️ Would exceed 10% single-name limit — consider splitting into 2 tranches\n"
+
+    msg += f"\n<b>Rating:</b> {rating}"
+    if thesis_text:
+        msg += f"\n<b>Thesis:</b> <i>{thesis_text[:150]}{'…' if len(thesis_text) > 150 else ''}</i>"
+
+    return msg
+
+
+@tool
+def set_thesis(ticker: str, thesis: str) -> str:
+    """Update the Thesis (Durable) field for a ticker in Notion. Use when user says 'set thesis NVDA ...' or 'update thesis for MU ...'."""
+    from src.tools.notion_holdings import update_thesis as _update_thesis
+    return _update_thesis(ticker.upper(), thesis)
+
+
+@tool
+def search_research(ticker: str = "", query: str = "") -> str:
+    """
+    Search the research library for past deep dives, earnings notes, and saved research.
+    Use ticker to find all research on a name, query for keyword search, or both.
+    Use for 'what did I research on MU', 'show past deep dives', 'find notes on capex'.
+    """
+    from src.tools.research_library import search_research as _search, format_research_results, get_research_summary
+    if not ticker and not query:
+        summary = get_research_summary()
+        if not summary:
+            return "📚 <b>Research Library</b>\n\nNo saved research yet. Library auto-saves every deep dive and earnings call analysis."
+        msg = "📚 <b>Research Library Index</b>\n\n"
+        for row in summary[:20]:
+            msg += f"• <b>{row['ticker']}</b> — {row['cnt']} entries · last {row['last']}\n"
+        return msg
+    rows = _search(query=query, ticker=ticker.upper() if ticker else "", limit=5)
+    header = f"📚 <b>Research: {ticker.upper() if ticker else query}</b>\n\n"
+    return header + format_research_results(rows)
+
+
+@tool
+def save_note(ticker: str, note: str) -> str:
+    """
+    Save a manual research note or observation to the library for a ticker.
+    Use when user says 'save a note on NVDA', 'remember this about MU', 'log this observation'.
+    """
+    from src.tools.research_library import save_research
+    save_research(ticker.upper(), "note", note)
+    return f"📝 Note saved for <b>{ticker.upper()}</b>."
 
 
 @tool
@@ -811,6 +945,10 @@ tools = [
     get_decision_journal,
     get_earnings_transcript,
     update_rating,
+    set_thesis,
+    size_position,
+    search_research,
+    save_note,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
@@ -979,6 +1117,7 @@ def handle_message(text: str, chat_id: str):
         _buy_match    = re.match(r'^(?:bought|buy|purchase[sd]?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z0-9.\-]+)\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?)(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
         _sell_match   = re.match(r'^(?:sold|sell|close[sd]?)\s+(?:all\s+)?(?:\d+\s+)?([A-Za-z0-9.\-]+)(?:\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?))?(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
         _rate_match   = re.match(r'^rate\s+([A-Za-z0-9.\-]+)\s+(.+)$', _cleaned)
+        _thesis_match = re.match(r'^(?:set\s+)?thesis\s+([A-Za-z0-9.\-]+)\s+(.+)$', _cleaned)
         _reload_match = _cleaned in ("reload holdings", "refresh holdings", "reload", "refresh watchlist")
 
         if _add_match:
@@ -1022,6 +1161,14 @@ def handle_message(text: str, chat_id: str):
             rating = _rate_match.group(2).strip()
             from src.tools.notion_holdings import update_rating as _update_rating
             result = _update_rating(ticker, rating)
+            send_message(result, chat_id)
+            return
+
+        if _thesis_match:
+            ticker = _thesis_match.group(1).upper()
+            thesis = _thesis_match.group(2).strip()
+            from src.tools.notion_holdings import update_thesis as _update_thesis
+            result = _update_thesis(ticker, thesis)
             send_message(result, chat_id)
             return
 
