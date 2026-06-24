@@ -1152,11 +1152,12 @@ def send_market_open_alert(market: str):
 
         # ── Parallel fetches ───────────────────────────────────────────────────
         def fetch_pre_market_moves():
-            """Pre-market % vs previous close for US tickers via yfinance fast_info."""
+            """Pre-market price vs previous close for US tickers via yfinance fast_info.
+            Returns only tickers where pre_market_price is actually available."""
             moves = {}
             if market != "US":
                 return moves
-            for ticker in mkt_tickers[:15]:  # cap at 15 to stay fast
+            for ticker in mkt_tickers[:15]:
                 try:
                     yfk = normalize_ticker(ticker)
                     if not yfk or yfk.startswith("CRYPTO:"):
@@ -1164,7 +1165,8 @@ def send_market_open_alert(market: str):
                     fi = yf.Ticker(yfk).fast_info
                     pre  = getattr(fi, "pre_market_price", None)
                     prev = getattr(fi, "previous_close", None)
-                    if pre and prev and prev > 0:
+                    # Only record if yfinance actually returned a pre-market price
+                    if pre and prev and prev > 0 and pre != prev:
                         pct = (pre - prev) / prev * 100
                         moves[ticker] = {"pre_price": pre, "prev_close": prev, "pre_pct": pct}
                 except Exception:
@@ -1172,134 +1174,155 @@ def send_market_open_alert(market: str):
             return moves
 
         def fetch_regular_prices():
-            """Regular session prices (last close) for all market tickers."""
             return get_live_prices(mkt_tickers)
 
         def fetch_earnings_today():
-            """Tavily: earnings calls scheduled for today in this market."""
-            query = (
-                "Hong Kong earnings results today announcement" if market == "HK"
-                else "US earnings calls today before market open after hours schedule"
+            """Use earnings_calendar.py to get tickers reporting today — no Tavily."""
+            try:
+                from src.tools.earnings_calendar import get_earnings_dates
+                all_tickers = list(WATCHLIST_DATA.keys())
+                dates = get_earnings_dates(all_tickers)
+                today = datetime.now().strftime("%Y-%m-%d")
+                reporting = []
+                for t, info in dates.items():
+                    d = info.get("date", "")
+                    when = info.get("when", "")
+                    if d and d.startswith(today):
+                        label = fmt(t)
+                        timing = f" ({when})" if when else ""
+                        reporting.append(f"{label}{timing}")
+                return reporting
+            except Exception as e:
+                print(f"[open_alert] earnings fetch error: {e}")
+                return []
+
+        def fetch_market_news():
+            """Actual news for our held names + macro — specific query with today's date."""
+            today_str = datetime.now().strftime("%B %d %Y")
+            top_names = " ".join(
+                d.get("name", t) for t, d in list(held.items())[:6]
             )
-            try:
-                return tavily_search(query, max_results=5, search_depth="basic")
-            except Exception:
-                return []
-
-        def fetch_economic_calendar():
-            """Tavily: key economic data releases due today."""
             if market == "HK":
-                query = "China economic data release today Hong Kong"
+                query = f"Hong Kong stock market open {today_str} China news"
             else:
-                query = f"US economic calendar data release today {datetime.now().strftime('%B %Y')}"
-            try:
-                return tavily_search(query, max_results=4, search_depth="basic")
-            except Exception:
-                return []
+                query = f"stock market pre-market {today_str} {top_names}"
+            results = tavily_search(query, max_results=6, search_depth="basic")
+            # Filter out generic calendar/schedule pages — only keep actual news
+            junk_keywords = ("calendar", "schedule", "investing.com", "tradingview",
+                             "barchart", "yahoo finance", "r/stock")
+            return [
+                r for r in results
+                if not any(k in r.get("title", "").lower() for k in junk_keywords)
+            ][:4]
 
-        def fetch_overnight_news():
-            """What happened overnight / before this open."""
+        def fetch_economic_events():
+            """Specific economic events due today — date-anchored query."""
             if market == "HK":
-                query = "US market overnight results Asia open today"
-            else:
-                query = "pre-market news US stocks today morning movers"
-            try:
-                return tavily_search(query, max_results=5, search_depth="basic")
-            except Exception:
-                return []
+                return []  # HK open is 9:20am — econ data rarely at that time
+            today_str = datetime.now().strftime("%B %d %Y")
+            results = tavily_search(
+                f"US economic data release {today_str} CPI jobs GDP Fed",
+                max_results=4, search_depth="basic"
+            )
+            junk_keywords = ("calendar", "schedule", "indicator release", "release schedule",
+                             "bureau of economic", "guggenheim", "bea.gov")
+            return [
+                r for r in results
+                if not any(k in r.get("title", "").lower() for k in junk_keywords)
+                and len(r.get("content", "")) > 100  # must have actual content
+            ][:3]
 
-        with ThreadPoolExecutor(max_workers=5) as ex:
+        with ThreadPoolExecutor(max_workers=4) as ex:
             f_pre    = ex.submit(fetch_pre_market_moves)
             f_prices = ex.submit(fetch_regular_prices)
             f_earn   = ex.submit(fetch_earnings_today)
-            f_econ   = ex.submit(fetch_economic_calendar)
-            f_news   = ex.submit(fetch_overnight_news)
+            f_news   = ex.submit(fetch_market_news)
+            f_econ   = ex.submit(fetch_economic_events)
 
-            pre_moves  = f_pre.result(timeout=20)
-            prices     = f_prices.result(timeout=20)
-            earn_news  = f_earn.result(timeout=15)
-            econ_news  = f_econ.result(timeout=15)
-            overnight  = f_news.result(timeout=15)
+            pre_moves = f_pre.result(timeout=20)
+            prices    = f_prices.result(timeout=20)
+            earnings_today = f_earn.result(timeout=15)
+            market_news    = f_news.result(timeout=15)
+            econ_events    = f_econ.result(timeout=15)
+
+        pre_market_available = len(pre_moves) > 0
 
         # ── Build message ──────────────────────────────────────────────────────
         now_str = datetime.now().strftime("%d %b %Y, %H:%M")
         msg = f"🔔 <b>{mkt_label}</b> — {mkt_time}\n<i>{now_str} HKT</i>\n\n"
 
-        # Section 1: your positions + pre-market moves (US) or last close (HK)
-        msg += f"<b>📊 Your {market} Positions</b>\n"
+        # Section 1: positions
+        if market == "US" and pre_market_available:
+            msg += f"<b>📊 Pre-Market Movers</b> <i>(vs prev close)</i>\n"
+        elif market == "US":
+            msg += f"<b>📊 Your US Positions</b> <i>(last close · pre-mkt data unavailable)</i>\n"
+        else:
+            msg += f"<b>📊 Your HK Positions</b> <i>(last close)</i>\n"
+
         position_lines = []
         for ticker in mkt_tickers:
             d = held.get(ticker, {})
-            name = d.get("name", ticker)
-            shares = d.get("shares", 0)
             avg_cost = d.get("avg_cost", 0)
 
             if market == "US" and ticker in pre_moves:
+                # Real pre-market data
                 pm = pre_moves[ticker]
                 pct = pm["pre_pct"]
                 icon = "▲" if pct > 0 else "▼"
-                pnl_icon = "🟢" if pct > 0 else "🔴"
-                line = (
-                    f"{pnl_icon} <b>{ticker}</b> {icon}{abs(pct):.1f}% pre-mkt "
-                    f"(${pm['pre_price']:.2f})"
-                )
-                # Add sizing hint for big moves (>3%) — how many shares = $5k/$10k add
+                emoji = "🟢" if pct > 0 else "🔴"
+                line = f"{emoji} <b>{ticker}</b> {icon}{abs(pct):.1f}% pre-mkt (${pm['pre_price']:.2f})"
                 if abs(pct) >= 3.0 and pm["pre_price"] > 0:
-                    shares_5k  = int(5000  / pm["pre_price"])
-                    shares_10k = int(10000 / pm["pre_price"])
+                    sh5  = int(5000  / pm["pre_price"])
+                    sh10 = int(10000 / pm["pre_price"])
                     action = "add" if pct < 0 else "trim"
-                    line += f"\n  💡 {action} hint: ${5000:,}={shares_5k}sh · ${10000:,}={shares_10k}sh"
-                position_lines.append(line)
+                    line += f"\n  💡 {action}: $5k={sh5}sh · $10k={sh10}sh"
+                position_lines.append((abs(pct), line))
             else:
-                # Fall back to last session close data
+                # Last close — show price + cost P&L only, NO session % (would be misleading)
                 p = prices.get(ticker, {})
-                chg = p.get("change_pct")
                 price = p.get("price")
-                if price and chg is not None:
-                    icon = "▲" if chg > 0 else "▼"
-                    pnl_icon = "🟢" if chg > 0 else "🔴"
-                    pnl_vs_cost = ((price - avg_cost) / avg_cost * 100) if avg_cost else None
-                    pnl_str = f" · cost P&L {pnl_vs_cost:+.1f}%" if pnl_vs_cost is not None else ""
-                    position_lines.append(
-                        f"{pnl_icon} <b>{ticker}</b> {icon}{abs(chg):.1f}% (${price:.2f}){pnl_str}"
-                    )
+                if price and avg_cost:
+                    pnl = (price - avg_cost) / avg_cost * 100
+                    emoji = "🟢" if pnl > 0 else "🔴"
+                    position_lines.append((0, f"{emoji} <b>{ticker}</b> ${price:.2f} · cost P&L {pnl:+.1f}%"))
+                elif price:
+                    position_lines.append((0, f"⚪ <b>{ticker}</b> ${price:.2f}"))
 
-        # Sort: biggest movers first
-        if market == "US":
-            position_lines_sorted = sorted(
-                position_lines,
-                key=lambda x: abs(float(x.split("%")[0].split("▲")[-1].split("▼")[-1].strip() or 0)),
-                reverse=True
-            )
-        else:
-            position_lines_sorted = position_lines
-
-        if position_lines_sorted:
-            msg += "\n".join(position_lines_sorted[:12]) + "\n"
+        # Sort: pre-market movers first (by abs move), then rest alphabetically
+        position_lines.sort(key=lambda x: x[0], reverse=True)
+        if position_lines:
+            msg += "\n".join(line for _, line in position_lines[:12]) + "\n"
         else:
             msg += "<i>No price data available yet</i>\n"
 
-        # Section 2: earnings today
-        if earn_news:
-            msg += f"\n<b>📅 Earnings / Announcements Today</b>\n"
-            for item in earn_news[:3]:
-                title = item.get("title", "")[:100]
-                msg += f"• {title}\n"
+        # Section 2: earnings today — from our own calendar, not Tavily
+        if earnings_today:
+            msg += f"\n<b>📅 Reporting Today</b>\n"
+            for item in earnings_today[:6]:
+                msg += f"• {item}\n"
+        else:
+            msg += f"\n<b>📅 Reporting Today</b>\n<i>No earnings from your watchlist today</i>\n"
 
-        # Section 3: economic calendar
-        if econ_news:
-            msg += f"\n<b>📋 Economic Calendar</b>\n"
-            for item in econ_news[:3]:
-                title = item.get("title", "")[:100]
+        # Section 3: economic events — only if actual content found
+        if econ_events:
+            msg += f"\n<b>📋 Economic Events Today</b>\n"
+            for item in econ_events:
+                title = item.get("title", "")[:90]
+                snippet = item.get("content", "")[:120].strip()
                 msg += f"• {title}\n"
+                if snippet:
+                    msg += f"  <i>{snippet}</i>\n"
 
-        # Section 4: overnight / pre-market headlines
-        if overnight:
-            label = "🌙 Overnight" if market == "HK" else "🌅 Pre-Market Headlines"
+        # Section 4: actual market news (filtered)
+        if market_news:
+            label = "🌙 Overnight News" if market == "HK" else "🌅 Pre-Market News"
             msg += f"\n<b>{label}</b>\n"
-            for item in overnight[:3]:
-                title = item.get("title", "")[:100]
+            for item in market_news:
+                title = item.get("title", "")[:90]
+                snippet = item.get("content", "")[:120].strip()
                 msg += f"• {title}\n"
+                if snippet:
+                    msg += f"  <i>{snippet}</i>\n"
 
         send_telegram(msg)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} open alert sent.")
