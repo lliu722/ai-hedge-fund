@@ -487,6 +487,45 @@ def handle_message(text: str, chat_id: str):
             send_weekly_digest()
             return
 
+        # ── Notion write-back commands ─────────────────────────────────────────
+        _add_match  = re.match(r'^add\s+([A-Za-z0-9.\-]+)(?:\s+to\s+(?:my\s+)?watchlist)?(?:\s+(.+))?$', lowered)
+        _buy_match  = re.match(r'^(?:bought|buy|purchase[sd]?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z0-9.\-]+)\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?)$', lowered)
+        _sell_match = re.match(r'^(?:sold|sell|close[sd]?)\s+(?:all\s+)?(?:\d+\s+)?([A-Za-z0-9.\-]+)$', lowered)
+        _reload_match = lowered in ("reload holdings", "refresh holdings", "reload", "refresh watchlist")
+
+        if _add_match:
+            ticker = _add_match.group(1).upper()
+            name = _add_match.group(2) or ""
+            from src.tools.notion_holdings import add_to_watchlist
+            result = add_to_watchlist(ticker, name.strip().title() if name else "")
+            send_message(result, chat_id)
+            return
+
+        if _buy_match:
+            shares = float(_buy_match.group(1))
+            ticker = _buy_match.group(2).upper()
+            avg_cost = float(_buy_match.group(3))
+            from src.tools.notion_holdings import update_position
+            result = update_position(ticker, shares, avg_cost)
+            send_message(result, chat_id)
+            return
+
+        if _sell_match:
+            ticker = _sell_match.group(1).upper()
+            from src.tools.notion_holdings import sell_position
+            result = sell_position(ticker)
+            send_message(result, chat_id)
+            return
+
+        if _reload_match:
+            from src.tools.notion_holdings import reload_holdings
+            from src.tools.bot_helpers import load_watchlist
+            reload_holdings()
+            send_message("✅ Holdings reloaded from Notion. Restart bot to reflect in agent memory.", chat_id)
+            return
+
+        # ── End write-back commands ────────────────────────────────────────────
+
         if lowered in ("picks", "recommendations", "what should i buy", "stock picks", "ai picks"):
             from src.tools.recommendations import get_recommendations
             send_message(

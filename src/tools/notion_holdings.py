@@ -130,6 +130,117 @@ def get_ticker_name_map() -> dict:
     return {t: d["name"] for t, d in holdings.items()}
 
 
+def reload_holdings() -> dict:
+    """Clear the in-process cache and re-fetch from Notion."""
+    global _holdings_cache
+    _holdings_cache = None
+    _holdings_cache = get_holdings_from_notion()
+    return _holdings_cache
+
+
+# ── Notion Write-Back ─────────────────────────────────────────────────────────
+
+def _notion_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {NOTION_API_KEY}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+    }
+
+
+def _find_page_id(ticker: str) -> str | None:
+    """Find the Notion page ID for a given ticker."""
+    try:
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{HOLDINGS_DATABASE_ID}/query",
+            headers=_notion_headers(),
+            json={"filter": {"property": "Ticker", "rich_text": {"equals": ticker.upper()}}},
+        )
+        results = r.json().get("results", [])
+        return results[0]["id"] if results else None
+    except Exception:
+        return None
+
+
+def add_to_watchlist(ticker: str, name: str = "") -> str:
+    """Create a new watchlist row in Notion (shares=0)."""
+    ticker = ticker.upper()
+    if not NOTION_API_KEY:
+        return "❌ NOTION_API_KEY not set."
+    try:
+        r = requests.post(
+            "https://api.notion.com/v1/pages",
+            headers=_notion_headers(),
+            json={
+                "parent": {"database_id": HOLDINGS_DATABASE_ID},
+                "properties": {
+                    "Name":   {"title":     [{"text": {"content": name or ticker}}]},
+                    "Ticker": {"rich_text": [{"text": {"content": ticker}}]},
+                    "Shares": {"number": 0},
+                },
+            },
+        )
+        if r.status_code == 200:
+            reload_holdings()
+            return f"✅ <b>{ticker}</b> added to watchlist."
+        return f"❌ Notion error {r.status_code}: {r.text[:100]}"
+    except Exception as e:
+        return f"❌ Error: {str(e)[:100]}"
+
+
+def update_position(ticker: str, shares: float, avg_cost: float) -> str:
+    """Update or create a position with new share count and average cost."""
+    ticker = ticker.upper()
+    if not NOTION_API_KEY:
+        return "❌ NOTION_API_KEY not set."
+    try:
+        page_id = _find_page_id(ticker)
+        props = {"Shares": {"number": shares}, "Avg Cost": {"number": avg_cost}}
+        if page_id:
+            r = requests.patch(
+                f"https://api.notion.com/v1/pages/{page_id}",
+                headers=_notion_headers(),
+                json={"properties": props},
+            )
+        else:
+            # New ticker — create row
+            props["Name"]   = {"title":     [{"text": {"content": ticker}}]}
+            props["Ticker"] = {"rich_text": [{"text": {"content": ticker}}]}
+            r = requests.post(
+                "https://api.notion.com/v1/pages",
+                headers=_notion_headers(),
+                json={"parent": {"database_id": HOLDINGS_DATABASE_ID}, "properties": props},
+            )
+        if r.status_code == 200:
+            reload_holdings()
+            return f"✅ <b>{ticker}</b>: {shares:.0f} shares @ ${avg_cost:.2f} saved to Notion."
+        return f"❌ Notion error {r.status_code}: {r.text[:100]}"
+    except Exception as e:
+        return f"❌ Error: {str(e)[:100]}"
+
+
+def sell_position(ticker: str) -> str:
+    """Set shares to 0 — moves ticker from portfolio to watchlist."""
+    ticker = ticker.upper()
+    if not NOTION_API_KEY:
+        return "❌ NOTION_API_KEY not set."
+    try:
+        page_id = _find_page_id(ticker)
+        if not page_id:
+            return f"❌ {ticker} not found in Notion."
+        r = requests.patch(
+            f"https://api.notion.com/v1/pages/{page_id}",
+            headers=_notion_headers(),
+            json={"properties": {"Shares": {"number": 0}}},
+        )
+        if r.status_code == 200:
+            reload_holdings()
+            return f"✅ <b>{ticker}</b> sold — moved to watchlist (shares set to 0)."
+        return f"❌ Notion error {r.status_code}: {r.text[:100]}"
+    except Exception as e:
+        return f"❌ Error: {str(e)[:100]}"
+
+
 if __name__ == "__main__":
     print("Testing Notion holdings sync...\n")
     holdings = get_holdings_from_notion()
