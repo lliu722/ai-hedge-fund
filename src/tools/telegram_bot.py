@@ -626,6 +626,27 @@ def get_ficc_data() -> str:
 
 
 @tool
+def get_read_through(ticker: str) -> str:
+    """
+    Industry read-through analysis: when a major company moves or reports earnings,
+    identify which held portfolio positions are affected and synthesize the implications.
+
+    Mapped triggers: NVDA, AMD, TSM, ASML, MU, WDC, GEV, CEG, PLTR, ASTS, GLW,
+    JPM, MSFT, META, GOOGL.
+
+    Use when the user asks: 'NVDA just beat — what does that mean for my other positions?',
+    'what's the read-through from TSM earnings?', 'MU is up 10% — does that help WDC?',
+    'what does MSFT capex mean for ALAB?', 'earnings read-through for [ticker]'.
+    """
+    from src.tools.read_through import get_read_through_analysis
+    # Strip common suffixes the user might add
+    import re as _re
+    t = _re.sub(r'\s+(earnings|results|report|news|beat|miss|guidance).*$', '', ticker.strip(), flags=_re.IGNORECASE).upper()
+    held = list(PORTFOLIO.keys())
+    return get_read_through_analysis(t, held)
+
+
+@tool
 def get_decision_journal(filter: str = "all") -> str:
     """
     Show the Decision Journal — a log of all trade decisions with thesis, rationale, and P&L outcomes.
@@ -770,6 +791,7 @@ tools = [
     check_risk,
     get_catalyst_calendar,
     get_theme_analysis,
+    get_read_through,
     get_decision_journal,
 ]
 

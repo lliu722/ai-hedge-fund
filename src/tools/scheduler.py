@@ -144,6 +144,10 @@ def send_morning_briefing():
             dates = f_dates.result()
             last_night = f_events.result()
 
+        # Read-through: check if any trigger tickers moved big overnight
+        from src.tools.read_through import get_morning_read_through
+        read_through_text = get_morning_read_through(held_prices, held_tickers)
+
         # Build theme performance summary (non-AI themes highlighted)
         from src.tools.themes import get_tickers_by_theme, THEME_THESIS
         by_theme = get_tickers_by_theme(WATCHLIST_DATA)
@@ -207,11 +211,14 @@ UPCOMING EARNINGS (next 14 days):
 EVENTS FROM LAST NIGHT (earnings calls, conferences, after-hours):
 {events_text if events_text else "None found."}
 
+INDUSTRY READ-THROUGH ALERTS (trigger tickers that moved 5%+ overnight):
+{read_through_text if read_through_text else "None."}
+
 THEME PERFORMANCE ACROSS ALL THESES:
 {chr(10).join(theme_lines) if theme_lines else "No theme data."}
 
 Write a morning briefing covering:
-1. LAST NIGHT'S EVENTS — if anything happened after hours yesterday (earnings, conferences, guidance), cover it FIRST: what happened, market reaction, what it means for the position. Skip this section if nothing found.
+1. LAST NIGHT'S EVENTS — if anything happened after hours yesterday (earnings, conferences, guidance), cover it FIRST: what happened, market reaction, what it means for the position. If industry read-through alerts are present, name the specific downstream holdings affected. Skip this section if nothing found.
 2. THEME SWEEP — one line per active theme: is the thesis on track, and what's driving it today? Cover ALL themes not just AI (Memory Cycle, Energy & Power, Banks & Rates, Space etc.)
 3. Top movers — highlight the 2-3 biggest moves and briefly explain why (name the specific thesis driver, not just "market moved")
 4. Key news — what matters from the headlines above and why it affects which thesis
