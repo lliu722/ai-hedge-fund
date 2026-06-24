@@ -96,18 +96,19 @@ def deep_dive(ticker: str) -> str:
 
 {news_context}
 
-Write a structured report with these 8 sections. Use <b>1. BUSINESS OVERVIEW</b> style headers:
+Write a structured report with these 9 sections. Use <b>1. BUSINESS OVERVIEW</b> style headers:
 
-1. BUSINESS OVERVIEW — what it does, how it makes money, role in AI infrastructure stack
-2. CURRENT SITUATION — what is happening right now based on news and filings
-3. BULL CASE (6-12 months) — strongest argument for owning, specific catalysts
-4. BEAR CASE — strongest argument against, what could go wrong
-5. KEY CATALYSTS — 3-5 upcoming events that could move the stock
-6. VALUATION — cheap / fair / expensive vs growth, reference the P/E and market cap
-7. THESIS INVALIDATION — specific events that would make the thesis wrong
-8. VERDICT — STRONG BUY / BUY / WATCH / AVOID with one paragraph rationale
+1. BUSINESS OVERVIEW — what it does, how it makes money. Break into distinct business lines with rough revenue split if known.
+2. COMPETITIVE LANDSCAPE — peer group by business line. For each major segment: who are the direct competitors, what is the company's market position, where is competition most intense vs where do they have breathing room? Name specific tickers/companies.
+3. CURRENT SITUATION — what is happening right now based on news and filings
+4. BULL CASE (6-12 months) — strongest argument for owning, specific catalysts
+5. BEAR CASE — strongest argument against, what could go wrong
+6. KEY CATALYSTS — 3-5 upcoming events that could move the stock
+7. VALUATION — cheap / fair / expensive vs growth, reference the P/E and market cap. Compare to closest peer multiple if known.
+8. THESIS INVALIDATION — specific events that would make the thesis wrong
+9. VERDICT — STRONG BUY / BUY / WATCH / AVOID with one paragraph rationale
 
-Under 800 words total. Be direct and opinionated."""
+Under 900 words total. Be direct and opinionated."""
 
     print("🤖 Calling DeepSeek for synthesis...")
     report = call_deepseek(user_prompt, system_prompt)
