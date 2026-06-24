@@ -47,12 +47,17 @@ git add src/tools/telegram_bot.py [other files] && git commit -m "..." && git pu
 - Master page: 38870984-77e4-818f-bd8b-ff154aa37a35
 
 ## Rules
-- Log every architectural decision to Notion Architecture & Decision Log
-- Update CLAUDE.md after every build session (keep "Built" and "Next to build" accurate)
-- Write memory files after every build session
 - Surgical edits preferred over full file rewrites
 - Always commit and push after each build
 - Never build without logging it
+
+## ⚠️ MANDATORY AFTER EVERY COMMIT+PUSH — NO EXCEPTIONS
+Every deployment must close with all 3 of these steps before reporting done:
+1. **Notion** — append entry to Architecture & Decision Log (38770984-77e4-8125-a509-fe1325e133fd): what was built, key decisions, tool count
+2. **CLAUDE.md** — update "Built" list and "Next to build" to reflect actual state; commit + push
+3. **Memory files** — update memory/project_state.md (tool count, new files, next to build) and memory/feedback_rules.md if any new rules learned
+
+If any of the 3 steps is skipped, the deployment is not complete.
 
 ## Built (all shipped)
 - Morning briefing (7am) — prices, geo pulse, read-through, theme sweep
