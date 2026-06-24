@@ -3,10 +3,9 @@ Theme Analysis Layer — covers ALL portfolio themes, not just AI infrastructure
 Each position maps to a primary investment thesis. Each thesis has its own
 signals, search queries, and what to watch for.
 """
-import os
-import requests
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from src.tools.llm import call_deepseek, tavily_search
 
 
 # ── Ticker → Thesis mapping ───────────────────────────────────────────────────
@@ -251,25 +250,12 @@ def get_theme_analysis(theme: str, held_tickers: list, prices: dict) -> str:
     if not meta:
         return f"No thesis data for theme: {theme}"
 
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-
     # Fetch Tavily news for this theme
     news_text = ""
-    try:
-        r = requests.post(
-            "https://api.tavily.com/search",
-            headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
-            json={"query": meta["search_query"], "max_results": 6, "search_depth": "basic"},
-            timeout=10,
-        )
-        if r.status_code == 200:
-            for a in r.json().get("results", [])[:5]:
-                news_text += f"- {a.get('title', '')}\n"
-                if a.get("content"):
-                    news_text += f"  {a['content'][:200]}\n"
-    except Exception:
-        pass
+    for a in tavily_search(meta["search_query"], max_results=6)[:5]:
+        news_text += f"- {a.get('title', '')}\n"
+        if a.get("content"):
+            news_text += f"  {a['content'][:200]}\n"
 
     # Build price summary
     price_lines = []
@@ -297,18 +283,8 @@ def get_theme_analysis(theme: str, held_tickers: list, prices: dict) -> str:
         f"Max 150 words. Be direct. Use <b>bold</b> for tickers and key verdicts."
     )
 
-    analysis = ""
-    try:
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 300, "temperature": 0.3},
-            timeout=30,
-        )
-        if r.status_code == 200:
-            analysis = r.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
+    analysis = call_deepseek(prompt, max_tokens=300, temperature=0.3, timeout=30)
+    if analysis.startswith("❌"):
         analysis = "Analysis unavailable."
 
     msg = (

@@ -19,6 +19,8 @@ except ImportError:
     _MEMORY_BACKEND = "memory"
 from langchain_deepseek import ChatDeepSeek
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
+from src.tools.llm import call_deepseek, tavily_search
+from src.tools.research_library import save_research
 
 load_dotenv()
 
@@ -174,10 +176,9 @@ def deep_dive(ticker: str) -> str:
     from src.tools.deep_dive import deep_dive as _deep_dive
     result = _deep_dive(ticker.upper())
     try:
-        from src.tools.research_library import save_research
         save_research(ticker.upper(), "deep_dive", result)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[telegram_bot:deep_dive] save_research error: {e}")
     return result
 
 
@@ -387,7 +388,6 @@ def get_catalyst_calendar(days_ahead: int = 60) -> str:
 @tool
 def earnings_reaction(ticker: str) -> str:
     """Post-earnings move analysis: actual vs expected, guidance vs consensus, whether the move is justified. Use for 'why did X drop/rally after earnings'."""
-    import requests
     from src.tools.prices import get_live_prices
     from src.tools.news_fetcher import get_news_for_tickers
     from concurrent.futures import ThreadPoolExecutor
@@ -400,11 +400,13 @@ def earnings_reaction(ticker: str) -> str:
 
     try:
         price_data  = f_price.result(timeout=20).get(ticker, {})
-    except Exception:
+    except Exception as e:
+        print(f"[telegram_bot:earnings_reaction] price fetch error: {e}")
         price_data = {}
     try:
         news_items  = f_news.result(timeout=20).get(ticker, [])
-    except Exception:
+    except Exception as e:
+        print(f"[telegram_bot:earnings_reaction] news fetch error: {e}")
         news_items = []
 
     price_context = (
@@ -441,21 +443,10 @@ def earnings_reaction(ticker: str) -> str:
     )
 
     try:
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {os.getenv('DEEPSEEK_API_KEY')}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 500,
-                "temperature": 0.3,
-            },
-            timeout=45,
-        )
-        if r.status_code == 200:
-            analysis = r.json()["choices"][0]["message"]["content"].strip()
-            return f"📊 <b>Earnings Reaction: {ticker}</b>\n\n{analysis}"
-        return f"❌ API error {r.status_code}"
+        analysis = call_deepseek(prompt, max_tokens=500, temperature=0.3, timeout=45)
+        if analysis.startswith("❌"):
+            return analysis
+        return f"📊 <b>Earnings Reaction: {ticker}</b>\n\n{analysis}"
     except Exception as e:
         return f"❌ Error: {str(e)[:150]}"
 
@@ -463,7 +454,6 @@ def earnings_reaction(ticker: str) -> str:
 @tool
 def get_portfolio_advice(ticker: str) -> str:
     """Buy/pass verdict, position sizing, 腾空间 (what to trim to fund it). Use for 'should I buy X', 'thinking of adding X'."""
-    import requests
     from src.tools.prices import get_live_prices
     from src.tools.notion_holdings import get_holdings_cached
     from src.tools.scheduler import PORTFOLIO_CATEGORIES
@@ -555,21 +545,10 @@ def get_portfolio_advice(ticker: str) -> str:
     )
 
     try:
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {os.getenv('DEEPSEEK_API_KEY')}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 450,
-                "temperature": 0.3,
-            },
-            timeout=45,
-        )
-        if r.status_code == 200:
-            advice = r.json()["choices"][0]["message"]["content"].strip()
-            return f"🧠 <b>Portfolio Advisor: {ticker}</b>\n\n{advice}"
-        return f"❌ API error {r.status_code}"
+        advice = call_deepseek(prompt, max_tokens=450, temperature=0.3, timeout=45)
+        if advice.startswith("❌"):
+            return advice
+        return f"🧠 <b>Portfolio Advisor: {ticker}</b>\n\n{advice}"
     except Exception as e:
         return f"❌ Error: {str(e)[:150]}"
 
@@ -585,29 +564,22 @@ def get_ficc_data() -> str:
 def get_earnings_transcript(ticker: str) -> str:
     """Earnings call summary: CEO tone, guidance vs expectations, capex language, key risk, best analyst Q&A. Use for 'what did management say', 'transcript', 'call highlights'."""
     ticker = ticker.upper()
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
     # Fetch transcript content via Tavily
     transcript_text = ""
     try:
-        r = requests.post(
-            "https://api.tavily.com/search",
-            headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "query": f"{ticker} earnings call transcript CEO guidance capex {datetime.now().year} Q1 Q2",
-                "max_results": 5,
-                "search_depth": "advanced",
-            },
+        results = tavily_search(
+            f"{ticker} earnings call transcript CEO guidance capex {datetime.now().year} Q1 Q2",
+            max_results=5,
+            search_depth="advanced",
             timeout=12,
         )
-        if r.status_code == 200:
-            for a in r.json().get("results", [])[:4]:
-                transcript_text += f"SOURCE: {a.get('title', '')}\n"
-                if a.get("content"):
-                    transcript_text += a["content"][:600] + "\n\n"
-    except Exception:
-        pass
+        for a in results[:4]:
+            transcript_text += f"SOURCE: {a.get('title', '')}\n"
+            if a.get("content"):
+                transcript_text += a["content"][:600] + "\n\n"
+    except Exception as e:
+        print(f"[telegram_bot:get_earnings_transcript] Tavily fetch error: {e}")
 
     if not transcript_text:
         transcript_text = "No transcript found — summarise based on training knowledge of recent earnings."
@@ -630,37 +602,25 @@ def get_earnings_transcript(ticker: str) -> str:
     )
 
     try:
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 550,
-                "temperature": 0.2,
-            },
-            timeout=40,
-        )
-        if r.status_code == 200:
-            analysis = r.json()["choices"][0]["message"]["content"].strip()
-            result = f"📞 <b>Earnings Call: {fmt(ticker)}</b>\n\n{analysis}"
-            try:
-                from src.tools.research_library import save_research
-                save_research(ticker, "earnings", result)
-            except Exception:
-                pass
-            # Auto-extract and log beat/miss to earnings tracker
-            try:
-                _auto_log_earnings_surprise(ticker, transcript_text, analysis, DEEPSEEK_API_KEY)
-            except Exception:
-                pass
-            return result
-        return f"❌ API error {r.status_code}"
+        analysis = call_deepseek(prompt, max_tokens=550, temperature=0.2, timeout=40)
+        if analysis.startswith("❌"):
+            return analysis
+        result = f"📞 <b>Earnings Call: {fmt(ticker)}</b>\n\n{analysis}"
+        try:
+            save_research(ticker, "earnings", result)
+        except Exception as e:
+            print(f"[telegram_bot:get_earnings_transcript] save_research error: {e}")
+        # Auto-extract and log beat/miss to earnings tracker
+        try:
+            _auto_log_earnings_surprise(ticker, transcript_text, analysis)
+        except Exception as e:
+            print(f"[telegram_bot:get_earnings_transcript] auto_log error: {e}")
+        return result
     except Exception as e:
         return f"❌ Error: {str(e)[:150]}"
 
 
-def _auto_log_earnings_surprise(ticker: str, transcript_text: str, analysis: str, api_key: str):
+def _auto_log_earnings_surprise(ticker: str, transcript_text: str, analysis: str):
     """Extract beat/miss + surprise %s from transcript analysis and auto-log to earnings tracker."""
     import json as _json
     extract_prompt = (
@@ -675,16 +635,9 @@ def _auto_log_earnings_surprise(ticker: str, transcript_text: str, analysis: str
         f"stock_reaction: next-day % move if mentioned, else null\n"
         f"Return ONLY the JSON, no explanation."
     )
-    r2 = requests.post(
-        "https://api.deepseek.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={"model": "deepseek-chat", "messages": [{"role": "user", "content": extract_prompt}],
-              "max_tokens": 100, "temperature": 0.0},
-        timeout=15,
-    )
-    if r2.status_code != 200:
+    raw = call_deepseek(extract_prompt, max_tokens=100, temperature=0.0, timeout=15)
+    if raw.startswith("❌"):
         return
-    raw = r2.json()["choices"][0]["message"]["content"].strip()
     # Strip markdown code fences if present
     raw = raw.strip("`").replace("json\n", "").strip()
     data = _json.loads(raw)
@@ -1034,7 +987,6 @@ def save_note(ticker: str, note: str) -> str:
     Save a manual research note or observation to the library for a ticker.
     Use when user says 'save a note on NVDA', 'remember this about MU', 'log this observation'.
     """
-    from src.tools.research_library import save_research
     save_research(ticker.upper(), "note", note)
     return f"📝 Note saved for <b>{ticker.upper()}</b>."
 
@@ -1234,36 +1186,26 @@ agent = create_react_agent(llm, tools, checkpointer=memory)
 
 def _call_explain(last_response: str) -> str:
     """Call DeepSeek with junior investor educational prompt."""
-    api_key = os.getenv("DEEPSEEK_API_KEY")
+    system = (
+        "You are a patient investment teacher explaining things to a junior investor who is still learning. "
+        "Given the information the bot just showed, explain: "
+        "(1) what this means in plain English, "
+        "(2) why it matters for the portfolio, "
+        "(3) how an experienced portfolio manager would think about and act on this. "
+        "Be specific, practical, and educational. Use simple language. "
+        "Format for Telegram using <b>bold</b> for key concepts. Max 250 words."
+    )
     try:
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a patient investment teacher explaining things to a junior investor who is still learning. "
-                            "Given the information the bot just showed, explain: "
-                            "(1) what this means in plain English, "
-                            "(2) why it matters for the portfolio, "
-                            "(3) how an experienced portfolio manager would think about and act on this. "
-                            "Be specific, practical, and educational. Use simple language. "
-                            "Format for Telegram using <b>bold</b> for key concepts. Max 250 words."
-                        )
-                    },
-                    {"role": "user", "content": "Please explain this for me:\n\n" + last_response}
-                ],
-                "max_tokens": 400,
-                "temperature": 0.4,
-            },
+        result = call_deepseek(
+            "Please explain this for me:\n\n" + last_response,
+            system=system,
+            max_tokens=400,
+            temperature=0.4,
             timeout=30,
         )
-        if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"]
-        return "Could not generate explanation."
+        if result.startswith("❌"):
+            return "Could not generate explanation."
+        return result
     except Exception as e:
         return f"Explanation error: {str(e)[:100]}"
 

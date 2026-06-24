@@ -5,6 +5,7 @@ EV/EBITDA for mature industrials.
 """
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
+from src.tools.llm import call_deepseek
 
 
 BANK_TICKERS = {"JPM", "MS", "GS", "BAC", "C", "WFC", "DB", "HSBC", "BCS"}
@@ -137,18 +138,11 @@ def _peer_comparison(ticker: str, main: dict) -> str:
             f"Be specific about the numbers. Start with 'Premium justified:' / 'Discount unwarranted:' / "
             f"'Trading in line:' / 'Expensive vs growth:' as appropriate."
         )
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {os.getenv('DEEPSEEK_API_KEY')}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 100, "temperature": 0.2},
-            timeout=15,
-        )
-        if r.status_code == 200:
-            verdict = r.json()["choices"][0]["message"]["content"].strip()
+        verdict = call_deepseek(prompt, max_tokens=100, temperature=0.2, timeout=15)
+        if verdict and not verdict.startswith("❌"):
             block += f"\n\n<i>⚖️ {verdict}</i>"
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[valuation] peer verdict error: {e}")
 
     return block
 

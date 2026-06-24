@@ -4,10 +4,9 @@ Three lenses: Screener + Gap Analysis + Catalyst Picks
 Four personas: Cathie Wood, Druckenmiller, Damodaran + Li Wei (HK/China)
 Based on the original virattt/ai-hedge-fund investor persona architecture.
 """
-import os
-import requests
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from src.tools.llm import call_deepseek
 
 CATHIE_WOOD = (
     "You are Cathie Wood, CEO of ARK Invest. Your philosophy: disruptive tech, "
@@ -62,22 +61,7 @@ HK_CHINA_SUFFIXES = (".HK", ".SS", ".SZ")
 
 
 def _call(system, user, tokens=400):
-    key = os.getenv("DEEPSEEK_API_KEY")
-    try:
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "max_tokens": tokens,
-                "temperature": 0.4,
-            },
-            timeout=45,
-        )
-        return r.json()["choices"][0]["message"]["content"] if r.status_code == 200 else "[error " + str(r.status_code) + "]"
-    except Exception as e:
-        return "[error: " + str(e) + "]"
+    return call_deepseek(user, system=system, max_tokens=tokens, temperature=0.4, timeout=45)
 
 
 def _is_us(ticker):

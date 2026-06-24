@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
 
 load_dotenv()
+from src.tools.llm import call_deepseek, tavily_search
 
 
 def load_watchlist():
@@ -93,6 +94,7 @@ def _is_market_open() -> bool:
     return len(_open_markets()) > 0
 
 
+# mirrors fmt() in telegram_bot.py — intentional, each uses its own loaded WATCHLIST_DATA
 def fmt(ticker: str) -> str:
     t = ticker.upper()
     name = WATCHLIST_DATA.get(t, {}).get("name", "")
@@ -106,21 +108,12 @@ def fetch_geopolitical_pulse() -> str:
     Fetch geopolitical news and compress to 4 geography lines (1 sentence each).
     Public — used by both the morning briefing and the on-demand bot tool.
     """
-    import requests as _req
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
     try:
-        r = _req.post(
-            "https://api.tavily.com/search",
-            headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "query": "geopolitical risk US China Taiwan Europe Middle East trade tariffs war today",
-                "max_results": 8,
-                "search_depth": "basic",
-            },
-            timeout=10,
+        articles = tavily_search(
+            "geopolitical risk US China Taiwan Europe Middle East trade tariffs war today",
+            max_results=8,
+            search_depth="basic",
         )
-        articles = r.json().get("results", []) if r.status_code == 200 else []
         if not articles:
             return ""
 
@@ -138,19 +131,7 @@ def fetch_geopolitical_pulse() -> str:
             f"NEWS:\n{news_text}"
         )
 
-        r2 = _req.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 180,
-                "temperature": 0.2,
-            },
-            timeout=15,
-        )
-        if r2.status_code == 200:
-            return r2.json()["choices"][0]["message"]["content"].strip()
+        return call_deepseek(prompt, max_tokens=180, temperature=0.2, timeout=15)
     except Exception as e:
         print(f"Geopolitical pulse error: {e}")
     return ""
@@ -166,9 +147,6 @@ def send_morning_briefing():
         from src.tools.news_fetcher import get_macro_news
         from src.tools.earnings_calendar import get_earnings_dates
         from src.tools.notify import send_telegram
-        import requests
-
-        DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
         def _fetch_geopolitical_pulse():
             """1-sentence per geography geopolitical snapshot for the morning briefing."""
@@ -179,17 +157,11 @@ def send_morning_briefing():
             held = [d.get("name", t) for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
             names_str = " ".join(held[:8])
             try:
-                r = requests.post(
-                    "https://api.tavily.com/search",
-                    headers={"Authorization": f"Bearer {os.getenv('TAVILY_API_KEY')}", "Content-Type": "application/json"},
-                    json={
-                        "query": f"earnings results conference call after hours {names_str} yesterday",
-                        "max_results": 5,
-                        "search_depth": "basic",
-                    },
-                    timeout=10,
+                return tavily_search(
+                    f"earnings results conference call after hours {names_str} yesterday",
+                    max_results=5,
+                    search_depth="basic",
                 )
-                return r.json().get("results", []) if r.status_code == 200 else []
             except Exception:
                 return []
 
@@ -301,22 +273,7 @@ Rules:
 - Be direct and specific — no generic statements
 - Format for Telegram using <b>bold</b> for emphasis"""
 
-        response = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 600,
-                "temperature": 0.3,
-            },
-            timeout=60,
-        )
-
-        briefing = response.json()["choices"][0]["message"]["content"] if response.status_code == 200 else "Could not generate AI briefing."
+        briefing = call_deepseek(prompt, max_tokens=600, temperature=0.3, timeout=60) or "Could not generate AI briefing."
 
         header = f"🌅 <b>Morning Briefing — {datetime.now().strftime('%A %d %B %Y')}</b>\n\n"
         price_block = "<b>Watchlist:</b>\n"
@@ -465,36 +422,21 @@ def send_weekly_digest():
         from src.tools.prices import get_live_prices
         from src.tools.earnings_calendar import get_earnings_dates
         from src.tools.notify import send_telegram
-        import requests
-
-        DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
         # Fetch macro indices, sector ETFs, AI watchlist, news in parallel
         def fetch_outside_news():
-            r = requests.post(
-                "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {os.getenv('TAVILY_API_KEY')}", "Content-Type": "application/json"},
-                json={
-                    "query": "stock market sector rotation theme investing week",
-                    "max_results": 8,
-                    "search_depth": "basic",
-                },
-                timeout=10
+            return tavily_search(
+                "stock market sector rotation theme investing week",
+                max_results=8,
+                search_depth="basic",
             )
-            return r.json().get("results", []) if r.status_code == 200 else []
 
         def fetch_macro_news():
-            r = requests.post(
-                "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {os.getenv('TAVILY_API_KEY')}", "Content-Type": "application/json"},
-                json={
-                    "query": "Fed interest rates CPI jobs inflation macro economic outlook week",
-                    "max_results": 5,
-                    "search_depth": "basic",
-                },
-                timeout=10
+            return tavily_search(
+                "Fed interest rates CPI jobs inflation macro economic outlook week",
+                max_results=5,
+                search_depth="basic",
             )
-            return r.json().get("results", []) if r.status_code == 200 else []
 
         macro_tickers = list(MACRO_TICKERS.keys())
         sector_tickers = list(SECTOR_ETFS.keys())
@@ -674,22 +616,7 @@ Rules:
 - Format for Telegram using <b>bold</b> for emphasis
 - ALWAYS respond in English"""
 
-        response = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 1000,
-                "temperature": 0.4,
-            },
-            timeout=60,
-        )
-
-        digest = response.json()["choices"][0]["message"]["content"] if response.status_code == 200 else "Could not generate weekly digest."
+        digest = call_deepseek(prompt, max_tokens=1000, temperature=0.4, timeout=60) or "Could not generate weekly digest."
 
         header = f"📊 <b>Weekly Digest — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
         if theme_health:
@@ -712,24 +639,17 @@ def _thesis_verdict(ticker: str, change: float, thesis: str, price: float) -> st
     if not thesis:
         return ""
     try:
-        import requests
         prompt = (
             f"{ticker} is down {abs(change):.1f}% today (now ${price:.2f}).\n"
             f"Investment thesis on file: {thesis[:300]}\n\n"
             f"Is this drop a buy-the-dip opportunity (thesis intact) or a signal the thesis may be impaired?\n"
             f"Reply in ONE short sentence starting with either '🟢 Thesis intact:' or '🔴 Thesis concern:'"
         )
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {os.getenv('DEEPSEEK_API_KEY')}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 80, "temperature": 0.2},
-            timeout=15,
-        )
-        if r.status_code == 200:
-            return "\n   " + r.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        pass
+        result = call_deepseek(prompt, max_tokens=80, temperature=0.2, timeout=15)
+        if result and not result.startswith("❌"):
+            return "\n   " + result
+    except Exception as e:
+        print(f"[scheduler:thesis_verdict] {e}")
     return ""
 
 
@@ -906,9 +826,6 @@ def _categorise(tickers: list) -> dict:
 def _post_market_advice(summary_lines: list, held: dict) -> str:
     """Generate targeted buy/trim/hold advice based on today's close moves."""
     try:
-        import requests
-        DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-
         # Build P&L context for held positions
         pnl_lines = []
         for t, d in held.items():
@@ -932,19 +849,9 @@ def _post_market_advice(summary_lines: list, held: dict) -> str:
             "use <b>bold</b> for tickers. No generic advice."
         )
 
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 350,
-                "temperature": 0.3,
-            },
-            timeout=30,
-        )
-        if r.status_code == 200:
-            return r.json()["choices"][0]["message"]["content"].strip()
+        result = call_deepseek(prompt, max_tokens=350, temperature=0.3, timeout=30)
+        if result and not result.startswith("❌"):
+            return result
     except Exception as e:
         print(f"Post-market advice error: {e}")
     return ""
@@ -956,10 +863,8 @@ def send_market_close_alert(market: str):
     """Send end-of-day portfolio summary grouped by category for the closing market."""
     print(f"[{datetime.now().strftime('%H:%M')}] Market close alert: {market}")
     try:
-        import requests
         from src.tools.prices import get_live_prices
         from src.tools.notify import send_telegram
-        DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
         # Determine which tickers to include based on market
         held = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
@@ -1022,27 +927,15 @@ def send_market_close_alert(market: str):
         # DeepSeek synthesis
         synthesis = ""
         try:
-            r = requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": "deepseek-chat",
-                    "messages": [{
-                        "role": "user",
-                        "content": (
-                            f"Portfolio {market} market close summary. Be direct, 2-3 sentences max.\n\n"
-                            f"Category performance:\n" + "\n".join(summary_lines) +
-                            f"\n\nWhat does today's pattern mean? Any category or stock to watch tomorrow? "
-                            f"Format for Telegram using <b>bold</b> for tickers/themes."
-                        )
-                    }],
-                    "max_tokens": 150,
-                    "temperature": 0.3,
-                },
-                timeout=30,
+            synth_prompt = (
+                f"Portfolio {market} market close summary. Be direct, 2-3 sentences max.\n\n"
+                f"Category performance:\n" + "\n".join(summary_lines) +
+                f"\n\nWhat does today's pattern mean? Any category or stock to watch tomorrow? "
+                f"Format for Telegram using <b>bold</b> for tickers/themes."
             )
-            if r.status_code == 200:
-                synthesis = "\n" + r.json()["choices"][0]["message"]["content"].strip()
+            synth_result = call_deepseek(synth_prompt, max_tokens=150, temperature=0.3, timeout=30)
+            if synth_result and not synth_result.startswith("❌"):
+                synthesis = "\n" + synth_result
         except Exception as e:
             print(f"Synthesis error: {e}")
 
@@ -1088,10 +981,6 @@ def check_breaking_news():
 
     print(f"[{datetime.now().strftime('%H:%M')}] Checking breaking news...")
     try:
-        import requests
-        DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-        TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-
         # Build company name list from top held positions
         held = [(t, d) for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
         top_held_names = " ".join(
@@ -1102,31 +991,21 @@ def check_breaking_news():
 
         # Search 1: held company breaking news
         try:
-            r1 = requests.post(
-                "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
-                json={"query": f"breaking news {top_held_names} today", "max_results": 8, "search_depth": "basic"},
-                timeout=10,
+            all_articles += tavily_search(
+                f"breaking news {top_held_names} today",
+                max_results=8,
+                search_depth="basic",
             )
-            if r1.status_code == 200:
-                all_articles += r1.json().get("results", [])
         except Exception as e:
             print(f"News search 1 error: {e}")
 
         # Search 2: macro / geopolitical breaking news
         try:
-            r2 = requests.post(
-                "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "query": "breaking news market moving geopolitical trade policy interest rates today",
-                    "max_results": 8,
-                    "search_depth": "basic",
-                },
-                timeout=10,
+            all_articles += tavily_search(
+                "breaking news market moving geopolitical trade policy interest rates today",
+                max_results=8,
+                search_depth="basic",
             )
-            if r2.status_code == 200:
-                all_articles += r2.json().get("results", [])
         except Exception as e:
             print(f"News search 2 error: {e}")
 
@@ -1167,23 +1046,10 @@ If nothing scores 8+, reply exactly: NO_BREAKING_NEWS
 Headlines to review:
 {headlines_text}"""
 
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": filter_prompt}],
-                "max_tokens": 400,
-                "temperature": 0.2,
-            },
-            timeout=30,
-        )
-
-        if r.status_code != 200:
-            print(f"DeepSeek filter error: {r.status_code}")
+        filtered = call_deepseek(filter_prompt, max_tokens=400, temperature=0.2, timeout=30)
+        if not filtered or filtered.startswith("❌"):
+            print(f"DeepSeek filter error: {filtered}")
             return
-
-        filtered = r.json()["choices"][0]["message"]["content"].strip()
 
         if "NO_BREAKING_NEWS" in filtered:
             print(f"[{datetime.now().strftime('%H:%M')}] Breaking news: nothing market-moving filtered through.")
@@ -1264,12 +1130,10 @@ def send_market_open_alert(market: str):
     """
     print(f"[{datetime.now().strftime('%H:%M')}] Market open alert: {market}")
     try:
-        import requests
         from src.tools.prices import get_live_prices, normalize_ticker
         from src.tools.notify import send_telegram
         import yfinance as yf
 
-        TAVILY_KEY = os.getenv("TAVILY_API_KEY")
         held = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
 
         # ── Segment tickers by market ──────────────────────────────────────────
@@ -1318,13 +1182,7 @@ def send_market_open_alert(market: str):
                 else "US earnings calls today before market open after hours schedule"
             )
             try:
-                r = requests.post(
-                    "https://api.tavily.com/search",
-                    headers={"Authorization": f"Bearer {TAVILY_KEY}", "Content-Type": "application/json"},
-                    json={"query": query, "max_results": 5, "search_depth": "basic"},
-                    timeout=10,
-                )
-                return r.json().get("results", []) if r.status_code == 200 else []
+                return tavily_search(query, max_results=5, search_depth="basic")
             except Exception:
                 return []
 
@@ -1335,13 +1193,7 @@ def send_market_open_alert(market: str):
             else:
                 query = f"US economic calendar data release today {datetime.now().strftime('%B %Y')}"
             try:
-                r = requests.post(
-                    "https://api.tavily.com/search",
-                    headers={"Authorization": f"Bearer {TAVILY_KEY}", "Content-Type": "application/json"},
-                    json={"query": query, "max_results": 4, "search_depth": "basic"},
-                    timeout=10,
-                )
-                return r.json().get("results", []) if r.status_code == 200 else []
+                return tavily_search(query, max_results=4, search_depth="basic")
             except Exception:
                 return []
 
@@ -1352,13 +1204,7 @@ def send_market_open_alert(market: str):
             else:
                 query = "pre-market news US stocks today morning movers"
             try:
-                r = requests.post(
-                    "https://api.tavily.com/search",
-                    headers={"Authorization": f"Bearer {TAVILY_KEY}", "Content-Type": "application/json"},
-                    json={"query": query, "max_results": 5, "search_depth": "basic"},
-                    timeout=10,
-                )
-                return r.json().get("results", []) if r.status_code == 200 else []
+                return tavily_search(query, max_results=5, search_depth="basic")
             except Exception:
                 return []
 

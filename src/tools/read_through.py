@@ -3,9 +3,8 @@ Industry Read-Through Map — when a trigger ticker moves or reports earnings,
 identify which portfolio positions are affected and why, then synthesize the
 implications via DeepSeek.
 """
-import os
-import requests
 from concurrent.futures import ThreadPoolExecutor
+from src.tools.llm import call_deepseek, tavily_search
 
 
 # ── Read-Through Map ──────────────────────────────────────────────────────────
@@ -201,30 +200,16 @@ def get_read_through_analysis(trigger_ticker: str, held_tickers: list,
             f"<i>Related tickers in the map: {', '.join(mapping['tickers'])}</i>"
         )
 
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-
     # Fetch latest news about the trigger if not provided
     if not news_context:
-        try:
-            r = requests.post(
-                "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "query": f"{trigger} earnings results guidance latest news today",
-                    "max_results": 6,
-                    "search_depth": "basic",
-                },
-                timeout=10,
-            )
-            if r.status_code == 200:
-                results = r.json().get("results", [])
-                news_context = ""
-                for a in results[:5]:
-                    news_context += f"- {a.get('title', '')}\n"
-                    if a.get("content"):
-                        news_context += f"  {a['content'][:200]}\n"
-        except Exception:
+        results = tavily_search(f"{trigger} earnings results guidance latest news today", max_results=6)
+        if results:
+            news_context = ""
+            for a in results[:5]:
+                news_context += f"- {a.get('title', '')}\n"
+                if a.get("content"):
+                    news_context += f"  {a['content'][:200]}\n"
+        else:
             news_context = "No news available."
 
     # Build relationship context for DeepSeek
@@ -252,22 +237,8 @@ def get_read_through_analysis(trigger_ticker: str, held_tickers: list,
         f"Max 200 words. Use <b>bold</b> for tickers. Be direct and specific — no generic statements."
     )
 
-    analysis = ""
-    try:
-        r = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek-chat",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 400,
-                "temperature": 0.3,
-            },
-            timeout=30,
-        )
-        if r.status_code == 200:
-            analysis = r.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
+    analysis = call_deepseek(prompt, max_tokens=400, temperature=0.3, timeout=30)
+    if analysis.startswith("❌"):
         analysis = "Analysis unavailable — check DeepSeek API."
 
     msg = (

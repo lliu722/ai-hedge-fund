@@ -7,12 +7,12 @@ Signal logic:
   arXiv:  paper count last 7 days on theme keywords → volume signal
   DeepSeek: synthesise into a one-line signal per theme (Accelerating / Stable / Cooling)
 """
-import os
 import re
 import requests
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from src.tools.llm import call_deepseek
 
 
 # ── Signal repos per theme ────────────────────────────────────────────────────
@@ -166,7 +166,6 @@ def get_theme_momentum(theme: str = None) -> str:
     Combines GitHub commit velocity + arXiv paper volume.
     DeepSeek synthesises into Accelerating / Stable / Cooling signal.
     """
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
     themes_to_run = [theme] if theme and theme in SIGNAL_REPOS else list(SIGNAL_REPOS.keys())
 
@@ -206,18 +205,11 @@ def get_theme_momentum(theme: str = None) -> str:
         )
 
         try:
-            r = requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-                json={"model": "deepseek-chat",
-                      "messages": [{"role": "user", "content": prompt}],
-                      "max_tokens": 80, "temperature": 0.2},
-                timeout=15,
-            )
-            if r.status_code == 200:
-                return r.json()["choices"][0]["message"]["content"].strip()
-        except Exception:
-            pass
+            result = call_deepseek(prompt, max_tokens=80, temperature=0.2, timeout=15)
+            if result and not result.startswith("❌"):
+                return result
+        except Exception as e:
+            print(f"[momentum] signal synthesis error: {e}")
 
         # Fallback: format raw data
         acc_values = [s["commit_acceleration"] for s in repo_stats if s.get("commit_acceleration")]
@@ -240,7 +232,6 @@ def get_weekly_momentum_digest() -> str:
     """
     Compact version for Sunday weekly digest — just the signal lines, no header.
     """
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
     themes = list(SIGNAL_REPOS.keys())
 
     def _quick_signal(t: str) -> str:

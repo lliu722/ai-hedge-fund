@@ -1,43 +1,16 @@
-import os
-import requests
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dotenv import load_dotenv
-
-load_dotenv()
+from concurrent.futures import ThreadPoolExecutor
 
 from src.tools.prices import get_live_prices
 from src.tools.news_fetcher import get_news_for_tickers
 from src.tools.sec_filings import get_filing_summary
-
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-
-
-def call_deepseek(prompt: str, system: str = "") -> str:
-    messages = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
-    try:
-        response = requests.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek-chat", "messages": messages, "max_tokens": 2000, "temperature": 0.3},
-            timeout=90,
-        )
-        if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
-        return f"API Error {response.status_code}: {response.text[:200]}"
-    except requests.exceptions.Timeout:
-        return "DeepSeek API timed out after 90s. Please try again."
-    except Exception as e:
-        return f"API call failed: {str(e)[:200]}"
+from src.tools.llm import call_deepseek
 
 
 def deep_dive(ticker: str) -> str:
     print(f"\n🔬 Deep dive: {ticker}")
 
-    # Pull saved notes from research library
+    # Pull saved notes + earnings history from research library
     def fetch_notes():
         try:
             from src.tools.research_library import search_research
@@ -45,12 +18,20 @@ def deep_dive(ticker: str) -> str:
         except Exception:
             return []
 
-    # Steps 1-4 in parallel
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        f_price   = ex.submit(get_live_prices, [ticker])
-        f_filings = ex.submit(get_filing_summary, ticker)
-        f_news    = ex.submit(get_news_for_tickers, [ticker])
-        f_notes   = ex.submit(fetch_notes)
+    def fetch_earnings_history():
+        try:
+            from src.tools.research_library import get_earnings_history
+            return get_earnings_history(ticker)
+        except Exception:
+            return []
+
+    # Steps 1-5 in parallel
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        f_price    = ex.submit(get_live_prices, [ticker])
+        f_filings  = ex.submit(get_filing_summary, ticker)
+        f_news     = ex.submit(get_news_for_tickers, [ticker])
+        f_notes    = ex.submit(fetch_notes)
+        f_earnings = ex.submit(fetch_earnings_history)
 
         try:
             price_data  = f_price.result(timeout=20).get(ticker, {})
@@ -68,8 +49,12 @@ def deep_dive(ticker: str) -> str:
             saved_notes = f_notes.result(timeout=10)
         except Exception:
             saved_notes = []
+        try:
+            earn_history = f_earnings.result(timeout=10)
+        except Exception:
+            earn_history = []
 
-    print(f"✅ Data fetched — price: {bool(price_data)}, news: {len(ticker_news)}, filings: {sum(len(v) for v in filings.values())}, notes: {len(saved_notes)}")
+    print(f"✅ Data fetched — price: {bool(price_data)}, news: {len(ticker_news)}, filings: {sum(len(v) for v in filings.values())}, notes: {len(saved_notes)}, earnings: {len(earn_history)}")
 
     price_context = f"""LIVE MARKET DATA for {ticker}:
 • Price: ${price_data.get('price', 'N/A')}
@@ -99,6 +84,18 @@ def deep_dive(ticker: str) -> str:
         for n in saved_notes[:5]:
             notes_context += f"[{n['type']} · {n['created']}]\n{n['content'][:400]}\n\n"
 
+    earnings_context = ""
+    if earn_history:
+        beats = sum(1 for r in earn_history if r["beat_miss"] == "Beat")
+        earnings_context = f"EARNINGS SURPRISE HISTORY ({beats}/{len(earn_history)} beats):\n"
+        for r in earn_history[:4]:
+            emoji = "🟢" if r["beat_miss"] == "Beat" else ("🔴" if r["beat_miss"] == "Miss" else "🟡")
+            parts = []
+            if r.get("rev_surprise_pct") is not None: parts.append(f"Rev {r['rev_surprise_pct']:+.1f}%")
+            if r.get("eps_surprise_pct") is not None: parts.append(f"EPS {r['eps_surprise_pct']:+.1f}%")
+            if r.get("stock_reaction") is not None: parts.append(f"Stock {r['stock_reaction']:+.1f}%")
+            earnings_context += f"{emoji} {r['period']}: {r['beat_miss']} · {' · '.join(parts)}\n"
+
     system_prompt = (
         "You are a senior equity research analyst covering multi-asset portfolios with a focus on AI infrastructure. "
         "Your reader is a sophisticated investor with a 1-12 month catalyst-driven horizon. "
@@ -114,6 +111,7 @@ def deep_dive(ticker: str) -> str:
 {filings_context}
 
 {news_context}
+{earnings_context}
 {notes_context}
 
 Write a structured report with these 9 sections. Use <b>1. BUSINESS OVERVIEW</b> style headers:
