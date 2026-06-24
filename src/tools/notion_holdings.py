@@ -7,6 +7,7 @@ Loaded once at module level and cached — shared across all importers.
 
 import os
 import requests
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -247,6 +248,129 @@ def sell_position(ticker: str) -> str:
         return f"❌ Notion error {r.status_code}: {r.text[:100]}"
     except Exception as e:
         return f"❌ Error: {str(e)[:100]}"
+
+
+# ── Trade Journal ─────────────────────────────────────────────────────────────
+
+JOURNAL_DATABASE_ID = "57ec5347-fc06-490d-9a60-e99e65a3d9bc"
+
+
+def log_trade_entry(ticker: str, action: str, shares: float, entry_price: float,
+                    rationale: str = "", theme: str = "") -> str:
+    """Create a new Trade Journal entry in Notion."""
+    ticker = ticker.upper()
+    if not theme:
+        try:
+            from src.tools.themes import THESIS_MAP
+            theme = THESIS_MAP.get(ticker, "Other")
+        except Exception:
+            theme = "Other"
+
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    name = f"{ticker} {action} · {datetime.now().strftime('%d %b %Y')}"
+
+    if not rationale:
+        holdings = get_holdings_cached()
+        thesis = holdings.get(ticker, {}).get("thesis", "")
+        rationale = thesis[:300] if thesis else f"{action} {ticker}"
+
+    try:
+        r = requests.post(
+            "https://api.notion.com/v1/pages",
+            headers=_notion_headers(),
+            json={
+                "parent": {"database_id": JOURNAL_DATABASE_ID},
+                "properties": {
+                    "Name":        {"title":     [{"text": {"content": name}}]},
+                    "Ticker":      {"rich_text": [{"text": {"content": ticker}}]},
+                    "Action":      {"select":    {"name": action}},
+                    "Shares":      {"number": shares},
+                    "Entry Price": {"number": entry_price},
+                    "Entry Date":  {"date": {"start": date_str}},
+                    "Rationale":   {"rich_text": [{"text": {"content": rationale[:2000]}}]},
+                    "Theme":       {"select":    {"name": theme}},
+                    "Status":      {"select":    {"name": "Open"}},
+                },
+            },
+        )
+        if r.status_code == 200:
+            return f"📓 Logged: {name}"
+        return f"⚠️ Journal log failed ({r.status_code})"
+    except Exception as e:
+        return f"⚠️ Journal error: {str(e)[:80]}"
+
+
+def close_trade_entry(ticker: str, exit_price: float, exit_note: str = "") -> str:
+    """Close the latest Open Trade Journal entry for a ticker with P&L calculation."""
+    ticker = ticker.upper()
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    try:
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{JOURNAL_DATABASE_ID}/query",
+            headers=_notion_headers(),
+            json={
+                "filter": {
+                    "and": [
+                        {"property": "Ticker", "rich_text": {"equals": ticker}},
+                        {"property": "Status", "select": {"equals": "Open"}},
+                    ]
+                },
+                "sorts": [{"timestamp": "created_time", "direction": "descending"}],
+                "page_size": 1,
+            },
+        )
+        results = r.json().get("results", [])
+        if not results:
+            return f"⚠️ No open journal entry found for {ticker}."
+
+        page = results[0]
+        page_id = page["id"]
+        props = page.get("properties", {})
+        entry_price = props.get("Entry Price", {}).get("number") or 0
+        pnl_pct = round((exit_price - entry_price) / entry_price * 100, 2) if entry_price else 0
+
+        update_props = {
+            "Exit Price":       {"number": exit_price},
+            "Exit Date":        {"date": {"start": date_str}},
+            "Realized PnL Pct": {"number": pnl_pct},
+            "Status":           {"select": {"name": "Closed"}},
+        }
+        if exit_note:
+            existing_rt = props.get("Rationale", {}).get("rich_text", [])
+            existing_text = existing_rt[0]["plain_text"] if existing_rt else ""
+            new_text = (existing_text + "\n\nEXIT: " + exit_note).strip()[:2000]
+            update_props["Rationale"] = {"rich_text": [{"text": {"content": new_text}}]}
+
+        rr = requests.patch(
+            f"https://api.notion.com/v1/pages/{page_id}",
+            headers=_notion_headers(),
+            json={"properties": update_props},
+        )
+        if rr.status_code == 200:
+            emoji = "🟢" if pnl_pct >= 0 else "🔴"
+            return f"📓 Journal closed: {ticker} {emoji} {pnl_pct:+.1f}% (${entry_price:.2f} → ${exit_price:.2f})"
+        return f"⚠️ Journal close failed ({rr.status_code})"
+    except Exception as e:
+        return f"⚠️ Journal close error: {str(e)[:80]}"
+
+
+def get_journal_entries(status: str = None, limit: int = 15) -> list:
+    """Fetch Trade Journal entries, optionally filtered by Open/Closed status."""
+    try:
+        payload: dict = {
+            "sorts": [{"timestamp": "created_time", "direction": "descending"}],
+            "page_size": limit,
+        }
+        if status:
+            payload["filter"] = {"property": "Status", "select": {"equals": status}}
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{JOURNAL_DATABASE_ID}/query",
+            headers=_notion_headers(),
+            json=payload,
+        )
+        return r.json().get("results", [])
+    except Exception:
+        return []
 
 
 if __name__ == "__main__":

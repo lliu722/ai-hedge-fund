@@ -626,6 +626,90 @@ def get_ficc_data() -> str:
 
 
 @tool
+def get_decision_journal(filter: str = "all") -> str:
+    """
+    Show the Decision Journal — a log of all trade decisions with thesis, rationale, and P&L outcomes.
+    Use filter='open' for active trades, 'closed' for completed trades, 'all' for everything.
+    Use when the user asks: 'show my journal', 'trade log', 'decision journal',
+    'what trades did I make', 'how did my trades do', 'journal summary', 'trade history'.
+    """
+    from src.tools.notion_holdings import get_journal_entries
+
+    status = None
+    if "open" in filter.lower():
+        status = "Open"
+    elif "closed" in filter.lower() or "complet" in filter.lower():
+        status = "Closed"
+
+    entries = get_journal_entries(status=status, limit=15)
+    if not entries:
+        return (
+            "📓 <b>Decision Journal</b>\n\nNo entries yet.\n\n"
+            "Log trades with:\n"
+            "<code>bought 100 MU at 82 — DRAM floor, buying the dip</code>\n"
+            "<code>sold MU at 95 — thesis played out</code>"
+        )
+
+    label = {"Open": "Open trades", "Closed": "Closed trades"}.get(status, "Recent trades")
+    msg = f"📓 <b>Decision Journal</b> — <i>{label}</i>\n\n"
+
+    pnl_list = []
+    open_count = closed_count = 0
+
+    for page in entries:
+        props = page.get("properties", {})
+
+        ticker_rt = props.get("Ticker", {}).get("rich_text", [])
+        ticker = ticker_rt[0]["plain_text"] if ticker_rt else "?"
+
+        action = props.get("Action", {}).get("select", {}).get("name", "?")
+        shares = props.get("Shares", {}).get("number") or 0
+        entry_price = props.get("Entry Price", {}).get("number") or 0
+        exit_price = props.get("Exit Price", {}).get("number")
+        pnl = props.get("Realized PnL Pct", {}).get("number")
+        trade_status = props.get("Status", {}).get("select", {}).get("name", "?")
+        theme = props.get("Theme", {}).get("select", {}).get("name", "")
+        rationale_rt = props.get("Rationale", {}).get("rich_text", [])
+        rationale = rationale_rt[0]["plain_text"] if rationale_rt else ""
+
+        # Header line
+        msg += f"<b>{ticker}</b> {action} · {shares:.0f} shares @ ${entry_price:.2f}"
+        if exit_price:
+            msg += f" → ${exit_price:.2f}"
+        msg += "\n"
+
+        # Status / P&L line
+        if trade_status == "Open":
+            open_count += 1
+            msg += f"<i>🟢 Open"
+        else:
+            closed_count += 1
+            if pnl is not None:
+                pnl_list.append(pnl)
+                emoji = "🟢" if pnl >= 0 else "🔴"
+                msg += f"<i>Closed {emoji} {pnl:+.1f}%"
+            else:
+                msg += "<i>Closed"
+        if theme:
+            msg += f" · {theme}"
+        msg += "</i>\n"
+
+        # Rationale (first 100 chars)
+        if rationale:
+            clean = rationale.split("\n\nEXIT:")[0].strip()
+            msg += f"<i>{clean[:100]}{'…' if len(clean) > 100 else ''}</i>\n"
+        msg += "\n"
+
+    # Summary footer
+    if pnl_list:
+        avg = sum(pnl_list) / len(pnl_list)
+        wins = sum(1 for p in pnl_list if p > 0)
+        msg += f"<b>Win rate:</b> {wins}/{len(pnl_list)} · <b>Avg P&L:</b> {avg:+.1f}%\n"
+    msg += f"<i>Open: {open_count} · Closed: {closed_count}</i>"
+    return msg
+
+
+@tool
 def get_theme_analysis(theme: str) -> str:
     """
     Deep analysis of a specific investment thesis / theme in the portfolio.
@@ -686,6 +770,7 @@ tools = [
     check_risk,
     get_catalyst_calendar,
     get_theme_analysis,
+    get_decision_journal,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
@@ -842,8 +927,8 @@ def handle_message(text: str, chat_id: str):
                 _cleaned = _cleaned[:-len(_filler)].rstrip()
         # Skip common filler words between "add" and the ticker
         _add_match  = re.match(r'^add\s+(?:(?:stock|ticker|equity|the|me|a)\s+)?([A-Za-z0-9.\-]+)(?:\s+to\s+(?:my\s+)?watchlist)?(?:\s+(.+))?$', _cleaned)
-        _buy_match  = re.match(r'^(?:bought|buy|purchase[sd]?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z0-9.\-]+)\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?)$', _cleaned)
-        _sell_match = re.match(r'^(?:sold|sell|close[sd]?)\s+(?:all\s+)?(?:\d+\s+)?([A-Za-z0-9.\-]+)$', _cleaned)
+        _buy_match  = re.match(r'^(?:bought|buy|purchase[sd]?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z0-9.\-]+)\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?)(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
+        _sell_match = re.match(r'^(?:sold|sell|close[sd]?)\s+(?:all\s+)?(?:\d+\s+)?([A-Za-z0-9.\-]+)(?:\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?))?(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
         _reload_match = _cleaned in ("reload holdings", "refresh holdings", "reload", "refresh watchlist")
 
         if _add_match:
@@ -858,16 +943,28 @@ def handle_message(text: str, chat_id: str):
             shares = float(_buy_match.group(1))
             ticker = _buy_match.group(2).upper()
             avg_cost = float(_buy_match.group(3))
-            from src.tools.notion_holdings import update_position
+            rationale = (_buy_match.group(4) or "").strip()
+            from src.tools.notion_holdings import update_position, log_trade_entry
             result = update_position(ticker, shares, avg_cost)
-            send_message(result, chat_id)
+            journal_result = log_trade_entry(ticker, "Buy", shares, avg_cost, rationale)
+            send_message(result + "\n" + journal_result, chat_id)
             return
 
         if _sell_match:
             ticker = _sell_match.group(1).upper()
-            from src.tools.notion_holdings import sell_position
+            explicit_exit = _sell_match.group(2)
+            exit_note = (_sell_match.group(3) or "").strip()
+            from src.tools.notion_holdings import sell_position, close_trade_entry
+            from src.tools.prices import get_live_prices
             result = sell_position(ticker)
-            send_message(result, chat_id)
+            # Determine exit price: explicit or live
+            if explicit_exit:
+                exit_price = float(explicit_exit)
+            else:
+                price_data = get_live_prices([ticker], detailed=False).get(ticker, {})
+                exit_price = price_data.get("price") or 0
+            journal_result = close_trade_entry(ticker, exit_price, exit_note) if exit_price else "⚠️ Could not fetch exit price for journal."
+            send_message(result + "\n" + journal_result, chat_id)
             return
 
         if _reload_match:
