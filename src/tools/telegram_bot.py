@@ -614,10 +614,16 @@ def handle_message(text: str, chat_id: str):
             return
 
         # ── Notion write-back commands ─────────────────────────────────────────
-        _add_match  = re.match(r'^add\s+([A-Za-z0-9.\-]+)(?:\s+to\s+(?:my\s+)?watchlist)?(?:\s+(.+))?$', lowered)
-        _buy_match  = re.match(r'^(?:bought|buy|purchase[sd]?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z0-9.\-]+)\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?)$', lowered)
-        _sell_match = re.match(r'^(?:sold|sell|close[sd]?)\s+(?:all\s+)?(?:\d+\s+)?([A-Za-z0-9.\-]+)$', lowered)
-        _reload_match = lowered in ("reload holdings", "refresh holdings", "reload", "refresh watchlist")
+        # Strip polite filler before matching
+        _cleaned = lowered.strip()
+        for _filler in (" please", " thanks", " thank you", " cheers"):
+            if _cleaned.endswith(_filler):
+                _cleaned = _cleaned[:-len(_filler)].rstrip()
+        # Skip common filler words between "add" and the ticker
+        _add_match  = re.match(r'^add\s+(?:(?:stock|ticker|equity|the|me|a)\s+)?([A-Za-z0-9.\-]+)(?:\s+to\s+(?:my\s+)?watchlist)?(?:\s+(.+))?$', _cleaned)
+        _buy_match  = re.match(r'^(?:bought|buy|purchase[sd]?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z0-9.\-]+)\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?)$', _cleaned)
+        _sell_match = re.match(r'^(?:sold|sell|close[sd]?)\s+(?:all\s+)?(?:\d+\s+)?([A-Za-z0-9.\-]+)$', _cleaned)
+        _reload_match = _cleaned in ("reload holdings", "refresh holdings", "reload", "refresh watchlist")
 
         if _add_match:
             ticker = _add_match.group(1).upper()
