@@ -59,6 +59,10 @@ SECTOR_ETFS = {
 # Tracks which tickers have already been alerted today — resets at morning briefing
 _alerted_today = {}
 
+# Tracks tickers that had a big drop and are being watched for stabilisation
+# {ticker: {"drop_pct": float, "price_at_drop": float, "recovery_alerted": bool}}
+_drop_watch: dict = {}
+
 # Tracks seen news headlines to avoid duplicate pushes — keyed by title[:80]
 _seen_headlines: set = set()
 
@@ -106,13 +110,34 @@ def send_morning_briefing():
 
         DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-        with ThreadPoolExecutor(max_workers=3) as ex:
+        def _fetch_last_night_events():
+            """Tavily search for earnings/conference results from last night."""
+            held = [d.get("name", t) for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
+            names_str = " ".join(held[:8])
+            try:
+                r = requests.post(
+                    "https://api.tavily.com/search",
+                    headers={"Authorization": f"Bearer {os.getenv('TAVILY_API_KEY')}", "Content-Type": "application/json"},
+                    json={
+                        "query": f"earnings results conference call after hours {names_str} yesterday",
+                        "max_results": 5,
+                        "search_depth": "basic",
+                    },
+                    timeout=10,
+                )
+                return r.json().get("results", []) if r.status_code == 200 else []
+            except Exception:
+                return []
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
             f_prices = ex.submit(get_live_prices, BRIEFING_TICKERS)
             f_macro = ex.submit(get_macro_news)
             f_dates = ex.submit(get_earnings_dates, BRIEFING_TICKERS)
+            f_events = ex.submit(_fetch_last_night_events)
             prices = f_prices.result()
             macro = f_macro.result()
             dates = f_dates.result()
+            last_night = f_events.result()
 
         upcoming = [
             (t, d) for t, d in dates.items()
@@ -140,6 +165,13 @@ def send_morning_briefing():
         else:
             earnings_text = "No earnings in the next 14 days."
 
+        events_text = ""
+        if last_night:
+            for a in last_night[:4]:
+                events_text += f"- {a.get('title', '')}\n"
+                if a.get("content"):
+                    events_text += f"  {a['content'][:200]}\n"
+
         prompt = f"""You are an AI investment research assistant. Write a concise morning briefing for an AI infrastructure equity investor.
 
 WATCHLIST PRICES TODAY:
@@ -151,12 +183,16 @@ MACRO & AI NEWS:
 UPCOMING EARNINGS (next 14 days):
 {earnings_text}
 
+EVENTS FROM LAST NIGHT (earnings calls, conferences, after-hours):
+{events_text if events_text else "None found."}
+
 Write a morning briefing covering:
-1. Overall market tone for AI infrastructure names (1-2 sentences)
-2. Top movers — highlight the 2-3 biggest moves and briefly explain why
-3. Key news — what matters from the headlines above and why it affects holdings
-4. Earnings watch — flag any upcoming earnings and what to watch for
-5. One thing to watch today
+1. LAST NIGHT'S EVENTS — if anything happened after hours yesterday (earnings, conferences, guidance), cover it FIRST: what happened, market reaction, what it means for the position. Skip this section if nothing found.
+2. Overall market tone for AI infrastructure names (1-2 sentences)
+3. Top movers — highlight the 2-3 biggest moves and briefly explain why
+4. Key news — what matters from the headlines above and why it affects holdings
+5. Earnings watch — flag any upcoming earnings and what to watch for
+6. One thing to watch today
 
 Rules:
 - Maximum 300 words
@@ -194,6 +230,7 @@ Rules:
         print(f"[{datetime.now().strftime('%H:%M')}] Morning briefing sent.")
 
         _alerted_today.clear()
+        _drop_watch.clear()
         print(f"[{datetime.now().strftime('%H:%M')}] Daily alert cache cleared.")
 
     except Exception as e:
@@ -390,6 +427,73 @@ Rules:
         send_telegram(f"❌ Weekly digest error: {str(e)[:200]}")
 
 
+# ── Thesis Verdict Helper ─────────────────────────────────────────────────────
+
+def _thesis_verdict(ticker: str, change: float, thesis: str, price: float) -> str:
+    """One-sentence verdict: thesis intact (buy dip) or thesis concern (wait)."""
+    if not thesis:
+        return ""
+    try:
+        import requests
+        prompt = (
+            f"{ticker} is down {abs(change):.1f}% today (now ${price:.2f}).\n"
+            f"Investment thesis on file: {thesis[:300]}\n\n"
+            f"Is this drop a buy-the-dip opportunity (thesis intact) or a signal the thesis may be impaired?\n"
+            f"Reply in ONE short sentence starting with either '🟢 Thesis intact:' or '🔴 Thesis concern:'"
+        )
+        r = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {os.getenv('DEEPSEEK_API_KEY')}", "Content-Type": "application/json"},
+            json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}],
+                  "max_tokens": 80, "temperature": 0.2},
+            timeout=15,
+        )
+        if r.status_code == 200:
+            return "\n   " + r.json()["choices"][0]["message"]["content"].strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _check_recovery_alerts(prices: dict, held_data: dict):
+    """
+    After a big drop, watch for price stabilisation and push a 'ready to add' alert.
+    Stabilised = currently between -3% and +3% (price found its floor).
+    """
+    if not _drop_watch:
+        return
+    from src.tools.notify import send_telegram
+    to_remove = []
+    msgs = []
+    for ticker, watch in _drop_watch.items():
+        if watch.get("recovery_alerted"):
+            to_remove.append(ticker)
+            continue
+        d = prices.get(ticker, {})
+        if not d or d.get("change_pct") is None:
+            continue
+        chg = d.get("change_pct") or 0
+        if -3.0 <= chg <= 3.0:
+            price = d.get("price")
+            orig_drop = watch["drop_pct"]
+            thesis = held_data.get(ticker, {}).get("thesis", "")
+            verdict = "🟢 Thesis intact — this may be an add point." if thesis else ""
+            msgs.append(
+                f"📍 <b>{fmt(ticker)}</b> has stabilised after yesterday's {orig_drop:+.1f}% drop.\n"
+                f"   Now: ${price} ({chg:+.2f}% today)\n"
+                f"   {verdict}"
+            )
+            _drop_watch[ticker]["recovery_alerted"] = True
+
+    if msgs:
+        send_telegram(
+            "🔔 <b>Price Stabilisation Alert</b>\n"
+            f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+            + "\n\n".join(msgs)
+            + "\n\n<i>Reply 'portfolio advisor [ticker]' for add/size/trim analysis.</i>"
+        )
+
+
 # ── Price Alerts ──────────────────────────────────────────────────────────────
 
 def check_price_alerts():
@@ -405,14 +509,18 @@ def check_price_alerts():
     try:
         from src.tools.prices import get_live_prices
         from src.tools.notify import send_telegram
+        from concurrent.futures import ThreadPoolExecutor
 
         today = datetime.now().strftime("%Y-%m-%d")
 
-        held = [t for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
-        tickers_to_check = held if held else WATCHLIST
+        held_data = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
+        tickers_to_check = list(held_data.keys()) if held_data else WATCHLIST
         prices = get_live_prices(tickers_to_check)
 
-        alerts = []
+        # Check for stabilisation of previously-dropped tickers
+        _check_recovery_alerts(prices, held_data)
+
+        alert_items = []  # (ticker, change, price, thesis)
         for ticker, data in prices.items():
             if not data:
                 continue
@@ -420,18 +528,41 @@ def check_price_alerts():
             if abs(change) >= 8.0:
                 if _alerted_today.get(ticker) == today:
                     continue
-                direction = "📈" if change > 0 else "📉"
-                alerts.append(
-                    f"{direction} <b>{fmt(ticker)}</b>: {change:+.2f}% (${data.get('price')})"
-                )
+                thesis = held_data.get(ticker, {}).get("thesis", "")
+                alert_items.append((ticker, change, data.get("price") or 0, thesis))
                 _alerted_today[ticker] = today
+                # Track drops for recovery watch
+                if change < -8.0:
+                    _drop_watch[ticker] = {
+                        "drop_pct": change,
+                        "price_at_drop": data.get("price") or 0,
+                        "recovery_alerted": False,
+                    }
 
-        if alerts:
+        if alert_items:
+            # Fetch thesis verdicts in parallel for drops
+            drops = [(t, c, p, th) for t, c, p, th in alert_items if c < 0 and th]
+            verdicts = {}
+            if drops:
+                with ThreadPoolExecutor(max_workers=4) as ex:
+                    futures = {ex.submit(_thesis_verdict, t, c, th, p): t for t, c, p, th in drops}
+                    for f, t in futures.items():
+                        try:
+                            verdicts[t] = f.result(timeout=20)
+                        except Exception:
+                            verdicts[t] = ""
+
+            lines = []
+            for ticker, change, price, thesis in alert_items:
+                direction = "📈" if change > 0 else "📉"
+                verdict = verdicts.get(ticker, "")
+                lines.append(f"{direction} <b>{fmt(ticker)}</b>: {change:+.2f}% (${price}){verdict}")
+
             msg = "🚨 <b>Price Alert — 8%+ Move</b>\n\n"
-            msg += "\n".join(alerts)
+            msg += "\n\n".join(lines)
             msg += "\n\n<i>Reply 'deep dive [ticker]' for full analysis.</i>"
             send_telegram(msg)
-            print(f"[{datetime.now().strftime('%H:%M')}] Sent {len(alerts)} price alerts.")
+            print(f"[{datetime.now().strftime('%H:%M')}] Sent {len(alert_items)} price alerts.")
         else:
             print(f"[{datetime.now().strftime('%H:%M')}] No new alerts triggered.")
 
