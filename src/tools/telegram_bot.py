@@ -774,6 +774,24 @@ def search_research(ticker: str = "", query: str = "") -> str:
 
 
 @tool
+def manage_alerts(action: str, ticker: str = "", threshold: float = 0, direction: str = "both") -> str:
+    """
+    Manage custom price alerts. action: 'set', 'remove', 'list'.
+    direction: 'up', 'down', or 'both'. threshold in percent (e.g. 5 = 5%).
+    Use when user says 'alert me when NVDA drops 5%', 'set alert for MU up 8%', 'remove alert NVDA', 'show my alerts'.
+    """
+    from src.tools.alert_config import set_alert, remove_alert, format_alerts_list
+    if action == "set":
+        if not ticker or threshold <= 0:
+            return "❌ Provide ticker and threshold. Example: set, NVDA, 5.0, down"
+        return set_alert(ticker.upper(), threshold, direction)
+    elif action == "remove":
+        return remove_alert(ticker.upper())
+    else:
+        return format_alerts_list()
+
+
+@tool
 def save_note(ticker: str, note: str) -> str:
     """
     Save a manual research note or observation to the library for a ticker.
@@ -949,6 +967,7 @@ tools = [
     size_position,
     search_research,
     save_note,
+    manage_alerts,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
@@ -1116,9 +1135,12 @@ def handle_message(text: str, chat_id: str):
         _add_match    = re.match(r'^add\s+(?:(?:stock|ticker|equity|the|me|a)\s+)?([A-Za-z0-9.\-]+)(?:\s+to\s+(?:my\s+)?watchlist)?(?:\s+(.+))?$', _cleaned)
         _buy_match    = re.match(r'^(?:bought|buy|purchase[sd]?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z0-9.\-]+)\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?)(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
         _sell_match   = re.match(r'^(?:sold|sell|close[sd]?)\s+(?:all\s+)?(?:\d+\s+)?([A-Za-z0-9.\-]+)(?:\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?))?(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
-        _rate_match   = re.match(r'^rate\s+([A-Za-z0-9.\-]+)\s+(.+)$', _cleaned)
-        _thesis_match = re.match(r'^(?:set\s+)?thesis\s+([A-Za-z0-9.\-]+)\s+(.+)$', _cleaned)
-        _reload_match = _cleaned in ("reload holdings", "refresh holdings", "reload", "refresh watchlist")
+        _rate_match        = re.match(r'^rate\s+([A-Za-z0-9.\-]+)\s+(.+)$', _cleaned)
+        _thesis_match      = re.match(r'^(?:set\s+)?thesis\s+([A-Za-z0-9.\-]+)\s+(.+)$', _cleaned)
+        _alert_set_match   = re.match(r'^alert\s+([A-Za-z0-9.\-]+)\s+(?:(up|down)\s+)?(\d+(?:\.\d+)?)%?$', _cleaned)
+        _alert_rm_match    = re.match(r'^(?:remove|delete|cancel)\s+alert\s+([A-Za-z0-9.\-]+)$', _cleaned)
+        _alert_list_match  = _cleaned in ("show alerts", "my alerts", "list alerts", "alerts")
+        _reload_match      = _cleaned in ("reload holdings", "refresh holdings", "reload", "refresh watchlist")
 
         if _add_match:
             ticker = _add_match.group(1).upper()
@@ -1170,6 +1192,25 @@ def handle_message(text: str, chat_id: str):
             from src.tools.notion_holdings import update_thesis as _update_thesis
             result = _update_thesis(ticker, thesis)
             send_message(result, chat_id)
+            return
+
+        if _alert_set_match:
+            ticker    = _alert_set_match.group(1).upper()
+            direction = (_alert_set_match.group(2) or "both").lower()
+            threshold = float(_alert_set_match.group(3))
+            from src.tools.alert_config import set_alert as _set_alert
+            send_message(_set_alert(ticker, threshold, direction), chat_id)
+            return
+
+        if _alert_rm_match:
+            ticker = _alert_rm_match.group(1).upper()
+            from src.tools.alert_config import remove_alert as _remove_alert
+            send_message(_remove_alert(ticker), chat_id)
+            return
+
+        if _alert_list_match:
+            from src.tools.alert_config import format_alerts_list
+            send_message(format_alerts_list(), chat_id)
             return
 
         if _reload_match:

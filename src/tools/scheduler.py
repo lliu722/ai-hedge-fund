@@ -59,6 +59,9 @@ SECTOR_ETFS = {
 # Tracks which tickers have already been alerted today — resets at morning briefing
 _alerted_today = {}
 
+# Dedup cache for custom alerts — key: "TICKER:direction:YYYY-MM-DD"
+_custom_alerted: dict = {}
+
 # Tracks tickers that had a big drop and are being watched for stabilisation
 # {ticker: {"drop_pct": float, "price_at_drop": float, "recovery_alerted": bool}}
 _drop_watch: dict = {}
@@ -645,6 +648,19 @@ def check_price_alerts():
                         "price_at_drop": data.get("price") or 0,
                         "recovery_alerted": False,
                     }
+
+        # ── Custom threshold alerts ───────────────────────────────────────────
+        try:
+            from src.tools.alert_config import check_custom_alerts
+            custom_hits = check_custom_alerts(prices, _custom_alerted, today)
+            if custom_hits:
+                custom_lines = []
+                for t, change, price, threshold, direction in custom_hits:
+                    arrow = "📈" if change > 0 else "📉"
+                    custom_lines.append(f"{arrow} <b>{fmt(t)}</b>: {change:+.2f}% (${price}) — your {threshold:.1f}% {direction} alert")
+                send_telegram("🔔 <b>Custom Alert Triggered</b>\n\n" + "\n".join(custom_lines))
+        except Exception as ce:
+            print(f"Custom alert check error: {ce}")
 
         if alert_items:
             # Fetch thesis verdicts in parallel for drops
