@@ -37,11 +37,20 @@ def call_deepseek(prompt: str, system: str = "") -> str:
 def deep_dive(ticker: str) -> str:
     print(f"\n🔬 Deep dive: {ticker}")
 
-    # Steps 1-3 in parallel
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    # Pull saved notes from research library
+    def fetch_notes():
+        try:
+            from src.tools.research_library import search_research
+            return search_research(ticker=ticker, limit=5)
+        except Exception:
+            return []
+
+    # Steps 1-4 in parallel
+    with ThreadPoolExecutor(max_workers=4) as ex:
         f_price   = ex.submit(get_live_prices, [ticker])
         f_filings = ex.submit(get_filing_summary, ticker)
         f_news    = ex.submit(get_news_for_tickers, [ticker])
+        f_notes   = ex.submit(fetch_notes)
 
         try:
             price_data  = f_price.result(timeout=20).get(ticker, {})
@@ -55,8 +64,12 @@ def deep_dive(ticker: str) -> str:
             ticker_news = f_news.result(timeout=20).get(ticker, [])
         except Exception:
             ticker_news = []
+        try:
+            saved_notes = f_notes.result(timeout=10)
+        except Exception:
+            saved_notes = []
 
-    print(f"✅ Data fetched — price: {bool(price_data)}, news: {len(ticker_news)}, filings: {sum(len(v) for v in filings.values())}")
+    print(f"✅ Data fetched — price: {bool(price_data)}, news: {len(ticker_news)}, filings: {sum(len(v) for v in filings.values())}, notes: {len(saved_notes)}")
 
     price_context = f"""LIVE MARKET DATA for {ticker}:
 • Price: ${price_data.get('price', 'N/A')}
@@ -80,6 +93,12 @@ def deep_dive(ticker: str) -> str:
     else:
         news_context += "No recent news found — use training knowledge.\n"
 
+    notes_context = ""
+    if saved_notes:
+        notes_context = "YOUR SAVED NOTES & PRIOR RESEARCH:\n"
+        for n in saved_notes[:5]:
+            notes_context += f"[{n['type']} · {n['created']}]\n{n['content'][:400]}\n\n"
+
     system_prompt = (
         "You are a senior equity research analyst covering multi-asset portfolios with a focus on AI infrastructure. "
         "Your reader is a sophisticated investor with a 1-12 month catalyst-driven horizon. "
@@ -95,6 +114,7 @@ def deep_dive(ticker: str) -> str:
 {filings_context}
 
 {news_context}
+{notes_context}
 
 Write a structured report with these 9 sections. Use <b>1. BUSINESS OVERVIEW</b> style headers:
 

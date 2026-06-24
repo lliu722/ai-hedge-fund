@@ -774,6 +774,65 @@ def search_research(ticker: str = "", query: str = "") -> str:
 
 
 @tool
+def get_sector_rotation() -> str:
+    """
+    Sector rotation monitor: 5-day ETF performance across all major sectors, ranked best to worst.
+    Flags if AI/tech is lagging while defensives or cyclicals lead — signals rotation out of theme.
+    Use for 'sector rotation', 'where is money flowing', 'is tech losing momentum', 'macro rotation'.
+    """
+    import yfinance as yf
+    from src.tools.scheduler import SECTOR_ETFS
+
+    SECTOR_ETF_MAP = {**SECTOR_ETFS, **{
+        "XLK": "Tech", "XLF": "Financials", "XLE": "Energy",
+        "XLV": "Healthcare", "XLI": "Industrials", "XLU": "Utilities",
+        "XLP": "Staples", "XLB": "Materials", "XLRE": "Real Estate",
+        "XLC": "Comms", "XLY": "Discretionary",
+    }}
+
+    try:
+        tickers = list(SECTOR_ETF_MAP.keys())
+        data = yf.download(tickers, period="5d", progress=False, auto_adjust=True)["Close"]
+        moves = []
+        for t in tickers:
+            if t not in data.columns:
+                continue
+            col = data[t].dropna()
+            if len(col) < 2:
+                continue
+            chg = (col.iloc[-1] - col.iloc[0]) / col.iloc[0] * 100
+            moves.append((SECTOR_ETF_MAP.get(t, t), chg, t))
+
+        moves.sort(key=lambda x: -x[1])
+
+        msg = f"🔄 <b>Sector Rotation — 5-Day Performance</b>\n"
+        msg += f"<i>{datetime.now().strftime('%d %b %Y')}</i>\n\n"
+
+        for label, chg, etf in moves:
+            bar = "█" * min(int(abs(chg) * 2), 10)
+            direction = "▲" if chg >= 0 else "▼"
+            msg += f"{direction} <b>{label}</b>: {chg:+.2f}% {bar}\n"
+
+        # Rotation signal
+        tech_chg = next((c for l, c, _ in moves if "Tech" in l or "AI" in l), None)
+        defensive = [(l, c) for l, c, _ in moves if l in ("Utilities", "Staples", "Healthcare")]
+        def_avg = sum(c for _, c in defensive) / len(defensive) if defensive else 0
+
+        msg += "\n"
+        if tech_chg is not None and def_avg > tech_chg + 3:
+            msg += "⚠️ <b>Rotation signal:</b> Defensives outperforming tech by {:.1f}pp — risk-off, watch AI positions closely.".format(def_avg - tech_chg)
+        elif tech_chg is not None and tech_chg > def_avg + 3:
+            msg += "✅ <b>Risk-on:</b> Tech leading defensives by {:.1f}pp — momentum favours AI theme.".format(tech_chg - def_avg)
+        else:
+            msg += "<i>No strong rotation signal — mixed market.</i>"
+
+        return msg
+
+    except Exception as e:
+        return f"❌ Sector rotation error: {str(e)[:150]}"
+
+
+@tool
 def get_pnl_summary() -> str:
     """Full P&L snapshot: unrealised (all positions vs cost), top winners/losers, by sector, realised trades this week. Use for 'P&L', 'how am I doing overall', 'weekly P&L', 'realised vs unrealised'."""
     from src.tools.scheduler import _compute_portfolio_pnl
@@ -976,6 +1035,7 @@ tools = [
     save_note,
     manage_alerts,
     get_pnl_summary,
+    get_sector_rotation,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
