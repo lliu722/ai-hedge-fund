@@ -278,14 +278,20 @@ def get_earnings_calendar() -> str:
 @tool
 def get_portfolio() -> str:
     """
-    Show actual held positions with live prices and P&L vs average cost.
-    Use when the user asks about their portfolio, actual holdings, positions with real money, or how their investments are doing.
+    Show actual held positions with live prices, dollar value, and P&L vs average cost.
+    Use when the user asks about their portfolio, actual holdings, positions with real money,
+    how their investments are doing, total P&L, or portfolio value.
     """
     from src.tools.prices import get_live_prices
     prices = get_live_prices(list(PORTFOLIO.keys()))
     msg = f"💼 <b>Portfolio — {len(PORTFOLIO)} Held Positions</b>\n"
     msg += f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
-    total_value = 0
+
+    rows = []
+    total_value = 0.0
+    total_cost = 0.0
+    winners = losers = 0
+
     for t, d in prices.items():
         if not d:
             continue
@@ -293,12 +299,38 @@ def get_portfolio() -> str:
         avg_cost = PORTFOLIO.get(t, {}).get("avg_cost", 0)
         price = d.get("price") or 0
         value = shares * price
+        cost_basis = shares * avg_cost
+        dollar_pnl = value - cost_basis
+        pnl_pct = ((price - avg_cost) / avg_cost * 100) if avg_cost else 0
         total_value += value
-        pnl = ((price - avg_cost) / avg_cost * 100) if avg_cost else 0
+        total_cost += cost_basis
+        if pnl_pct >= 0:
+            winners += 1
+        else:
+            losers += 1
+        rows.append((t, d, price, value, dollar_pnl, pnl_pct))
+
+    # Sort by position value descending
+    rows.sort(key=lambda x: -x[3])
+
+    for t, d, price, value, dollar_pnl, pnl_pct in rows:
         direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
-        msg += f"{direction} <b>{fmt(t)}</b>: ${price} ({d.get('change_pct'):+.2f}%) • P&L: {pnl:+.1f}%\n"
+        pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+        value_str = f"${value:,.0f}"
+        dollar_str = f"${dollar_pnl:+,.0f}"
+        msg += (
+            f"{direction} <b>{fmt(t)}</b>: ${price} ({d.get('change_pct'):+.2f}%)\n"
+            f"   {pnl_emoji} {value_str} · P&L {dollar_str} ({pnl_pct:+.1f}%)\n"
+        )
+
     if total_value > 0:
-        msg += f"\n<i>Total market value: ${total_value:,.0f}</i>"
+        total_pnl = total_value - total_cost
+        total_pnl_pct = (total_pnl / total_cost * 100) if total_cost else 0
+        pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+        msg += (
+            f"\n{pnl_emoji} <b>Total: ${total_value:,.0f}</b> · P&L <b>${total_pnl:+,.0f} ({total_pnl_pct:+.1f}%)</b>\n"
+            f"<i>{winners} winners · {losers} losers</i>"
+        )
     return msg
 
 
@@ -626,6 +658,93 @@ def get_ficc_data() -> str:
 
 
 @tool
+def get_earnings_transcript(ticker: str) -> str:
+    """
+    Pull and summarise the most recent earnings call transcript for a company.
+    Extracts: CEO tone, revenue/EPS guidance vs expectations, capex and investment
+    language, key risks flagged by management, and the most important analyst Q&A exchange.
+    Use when the user asks: 'what did [CEO] say on the call?', 'earnings call summary',
+    'what was the guidance?', 'transcript highlights', 'what did management say about capex?',
+    'conference call takeaways for [ticker]'.
+    """
+    ticker = ticker.upper()
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+    # Fetch transcript content via Tavily
+    transcript_text = ""
+    try:
+        r = requests.post(
+            "https://api.tavily.com/search",
+            headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "query": f"{ticker} earnings call transcript CEO guidance capex 2026 Q1 Q2",
+                "max_results": 5,
+                "search_depth": "advanced",
+            },
+            timeout=12,
+        )
+        if r.status_code == 200:
+            for a in r.json().get("results", [])[:4]:
+                transcript_text += f"SOURCE: {a.get('title', '')}\n"
+                if a.get("content"):
+                    transcript_text += a["content"][:600] + "\n\n"
+    except Exception:
+        pass
+
+    if not transcript_text:
+        transcript_text = "No transcript found — summarise based on training knowledge of recent earnings."
+
+    prompt = (
+        f"You are a senior equity analyst summarising {ticker}'s most recent earnings call.\n\n"
+        f"TRANSCRIPT EXCERPTS:\n{transcript_text}\n\n"
+        f"Extract and format these 5 elements:\n\n"
+        f"<b>1. CEO TONE</b> — Bullish / Neutral / Cautious? What was the overall message?\n\n"
+        f"<b>2. GUIDANCE</b> — What did management say about next quarter / full year revenue and EPS? "
+        f"Was it above, in-line, or below expectations? Quote specific numbers if available.\n\n"
+        f"<b>3. CAPEX & INVESTMENT</b> — What are they spending on? Any change in investment plans? "
+        f"Specific $ amounts if mentioned.\n\n"
+        f"<b>4. KEY RISK FLAGGED</b> — What risk or uncertainty did management highlight most? "
+        f"Exact language matters here.\n\n"
+        f"<b>5. BEST ANALYST Q&A</b> — One exchange that revealed the most about the business. "
+        f"Who asked, what they asked, what management said.\n\n"
+        f"Max 300 words total. Be specific — use numbers and direct quotes where possible. "
+        f"Use <b>bold</b> for key figures and verdicts."
+    )
+
+    try:
+        r = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 550,
+                "temperature": 0.2,
+            },
+            timeout=40,
+        )
+        if r.status_code == 200:
+            analysis = r.json()["choices"][0]["message"]["content"].strip()
+            return f"📞 <b>Earnings Call: {fmt(ticker)}</b>\n\n{analysis}"
+        return f"❌ API error {r.status_code}"
+    except Exception as e:
+        return f"❌ Error: {str(e)[:150]}"
+
+
+@tool
+def update_rating(ticker: str, rating: str) -> str:
+    """
+    Update the investment rating for a ticker in the Notion watchlist.
+    Valid ratings: Buy, Spec. Buy, Allocate, Hold, Watchlist, Researching, Sell.
+    Use when the user says: 'rate NVDA buy', 'upgrade MU to buy', 'downgrade INTC to hold',
+    'mark ALAB as spec buy', 'set RKLB to watchlist', 'rate [ticker] [rating]'.
+    """
+    from src.tools.notion_holdings import update_rating as _update_rating
+    return _update_rating(ticker.upper(), rating)
+
+
+@tool
 def get_theme_momentum(theme: str = "all") -> str:
     """
     GitHub commit velocity + arXiv paper volume as leading indicators of thesis momentum.
@@ -832,6 +951,8 @@ tools = [
     get_geopolitical_pulse,
     get_read_through,
     get_decision_journal,
+    get_earnings_transcript,
+    update_rating,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
@@ -996,9 +1117,10 @@ def handle_message(text: str, chat_id: str):
             if _cleaned.endswith(_filler):
                 _cleaned = _cleaned[:-len(_filler)].rstrip()
         # Skip common filler words between "add" and the ticker
-        _add_match  = re.match(r'^add\s+(?:(?:stock|ticker|equity|the|me|a)\s+)?([A-Za-z0-9.\-]+)(?:\s+to\s+(?:my\s+)?watchlist)?(?:\s+(.+))?$', _cleaned)
-        _buy_match  = re.match(r'^(?:bought|buy|purchase[sd]?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z0-9.\-]+)\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?)(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
-        _sell_match = re.match(r'^(?:sold|sell|close[sd]?)\s+(?:all\s+)?(?:\d+\s+)?([A-Za-z0-9.\-]+)(?:\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?))?(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
+        _add_match    = re.match(r'^add\s+(?:(?:stock|ticker|equity|the|me|a)\s+)?([A-Za-z0-9.\-]+)(?:\s+to\s+(?:my\s+)?watchlist)?(?:\s+(.+))?$', _cleaned)
+        _buy_match    = re.match(r'^(?:bought|buy|purchase[sd]?)\s+(\d+(?:\.\d+)?)\s+([A-Za-z0-9.\-]+)\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?)(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
+        _sell_match   = re.match(r'^(?:sold|sell|close[sd]?)\s+(?:all\s+)?(?:\d+\s+)?([A-Za-z0-9.\-]+)(?:\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?))?(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
+        _rate_match   = re.match(r'^rate\s+([A-Za-z0-9.\-]+)\s+(.+)$', _cleaned)
         _reload_match = _cleaned in ("reload holdings", "refresh holdings", "reload", "refresh watchlist")
 
         if _add_match:
@@ -1035,6 +1157,14 @@ def handle_message(text: str, chat_id: str):
                 exit_price = price_data.get("price") or 0
             journal_result = close_trade_entry(ticker, exit_price, exit_note) if exit_price else "⚠️ Could not fetch exit price for journal."
             send_message(result + "\n" + journal_result, chat_id)
+            return
+
+        if _rate_match:
+            ticker = _rate_match.group(1).upper()
+            rating = _rate_match.group(2).strip()
+            from src.tools.notion_holdings import update_rating as _update_rating
+            result = _update_rating(ticker, rating)
+            send_message(result, chat_id)
             return
 
         if _reload_match:

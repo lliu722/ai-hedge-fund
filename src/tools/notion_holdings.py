@@ -228,6 +228,40 @@ def update_position(ticker: str, shares: float, avg_cost: float) -> str:
         return f"❌ Error: {str(e)[:100]}"
 
 
+def update_rating(ticker: str, rating: str) -> str:
+    """Update the Rating field for a ticker in the Holdings DB."""
+    ticker = ticker.upper()
+    # Normalise rating aliases
+    _aliases = {
+        "buy": "Buy", "strong buy": "Buy",
+        "spec buy": "Spec. Buy", "spec. buy": "Spec. Buy", "speculative buy": "Spec. Buy", "spec": "Spec. Buy",
+        "allocate": "Allocate",
+        "hold": "Hold",
+        "watchlist": "Watchlist", "watch": "Watchlist",
+        "researching": "Researching", "research": "Researching",
+        "tactical": "Tactical / To Review", "to review": "Tactical / To Review",
+        "sell": "Sell",
+    }
+    normalised = _aliases.get(rating.lower().strip(), rating.strip().title())
+    if not NOTION_API_KEY:
+        return "❌ NOTION_API_KEY not set."
+    try:
+        page_id = _find_page_id(ticker)
+        if not page_id:
+            return f"❌ {ticker} not found in Notion."
+        r = requests.patch(
+            f"https://api.notion.com/v1/pages/{page_id}",
+            headers=_notion_headers(),
+            json={"properties": {"Rating": {"select": {"name": normalised}}}},
+        )
+        if r.status_code == 200:
+            reload_holdings()
+            return f"✅ <b>{ticker}</b> rated <b>{normalised}</b> in Notion."
+        return f"❌ Notion error {r.status_code}: {r.text[:100]}"
+    except Exception as e:
+        return f"❌ Error: {str(e)[:100]}"
+
+
 def sell_position(ticker: str) -> str:
     """Set shares to 0 — moves ticker from portfolio to watchlist."""
     ticker = ticker.upper()
