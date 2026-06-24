@@ -107,5 +107,7 @@ If any of the 3 steps is skipped, the deployment is not complete.
 - Watchlist price targets — `target MRVL below 60`; fires when price crosses; check_watchlist_targets in 30-min loop
 - Weekly theme health score — 0–10 per theme (momentum + breadth) in Sunday digest + get_theme_health @tool
 
+- Code refactor: shared llm.py (call_deepseek + tavily_search), zero inline API calls, -238 net lines, dead stubs deleted
+
 ## Next to build
 (awaiting next direction)
