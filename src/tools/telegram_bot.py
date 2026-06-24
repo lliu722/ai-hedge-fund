@@ -8,7 +8,15 @@ from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
-from langgraph.checkpoint.memory import MemorySaver
+try:
+    from langgraph.checkpoint.sqlite import SqliteSaver as _CheckpointSaver
+    import os as _os
+    _DB_DIR = "/app/data" if _os.path.exists("/app") else "."
+    _os.makedirs(_DB_DIR, exist_ok=True)
+    _MEMORY_BACKEND = "sqlite"
+except ImportError:
+    from langgraph.checkpoint.memory import MemorySaver as _CheckpointSaver
+    _MEMORY_BACKEND = "memory"
 from langchain_deepseek import ChatDeepSeek
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
 
@@ -343,6 +351,52 @@ llm = ChatDeepSeek(
 )
 
 @tool
+def get_valuation(ticker: str) -> str:
+    """
+    Get detailed valuation metrics for a stock: P/E, forward P/E, PEG, EV/Revenue,
+    EV/EBITDA, Price/Book, margins, ROE, FCF. Asset-class aware — uses P/TBV + ROE for banks.
+    Use when the user asks 'is X cheap or expensive', 'what's the valuation', 'how does X compare
+    to peers on multiples', or wants to understand if a stock is overvalued/undervalued.
+    """
+    from src.tools.valuation import get_valuation_message
+    return get_valuation_message(ticker.upper())
+
+
+@tool
+def check_risk() -> str:
+    """
+    Portfolio risk check: concentration by theme, highly correlated position pairs,
+    single-stock concentration flags. Identifies hidden bets — positions that look
+    diversified but move together.
+    Use when the user asks 'check my risk', 'am I too concentrated', 'what are my biggest risks',
+    'how diversified am I', or 'what moves together in my portfolio'.
+    """
+    from src.tools.risk import get_risk_report
+    from src.tools.notion_holdings import get_holdings_cached
+    from src.tools.prices import get_live_prices
+    holdings = get_holdings_cached()
+    held = [t for t, d in holdings.items() if (d.get("shares") or 0) > 0]
+    prices = get_live_prices(held)
+    return get_risk_report(holdings, prices)
+
+
+@tool
+def get_catalyst_calendar(days_ahead: int = 60) -> str:
+    """
+    Forward event calendar: FOMC meetings, major tech conferences (GTC, Hot Chips,
+    Computex, AWS re:Invent), export control review dates, and earnings for held positions.
+    Shows which events affect which holdings and why they matter.
+    Use when the user asks 'what's coming up', 'any catalysts', 'what events should I watch',
+    'when is the next FOMC', or 'what conferences are coming up'.
+    """
+    from src.tools.catalyst_calendar import get_catalyst_calendar as _gc
+    from src.tools.notion_holdings import get_holdings_cached
+    holdings = get_holdings_cached()
+    held = [t for t, d in holdings.items() if (d.get("shares") or 0) > 0]
+    return _gc(held, days_ahead)
+
+
+@tool
 def earnings_reaction(ticker: str) -> str:
     """
     Explain why a stock moved the way it did after earnings.
@@ -567,9 +621,19 @@ tools = [
     get_ficc_data,
     get_portfolio_advice,
     earnings_reaction,
+    get_valuation,
+    check_risk,
+    get_catalyst_calendar,
 ]
 
-memory = MemorySaver()
+if _MEMORY_BACKEND == "sqlite":
+    import os as _os2
+    _db_path = _os2.path.join(_DB_DIR, "agent_memory.db")
+    memory = _CheckpointSaver.from_conn_string(_db_path)
+    print(f"💾 Memory: SQLite ({_db_path})")
+else:
+    memory = _CheckpointSaver()
+    print("💾 Memory: in-process (SQLite not available)")
 agent = create_react_agent(llm, tools, checkpointer=memory)
 
 
