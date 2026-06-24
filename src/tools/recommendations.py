@@ -1,7 +1,7 @@
 """
 AI Stock Recommendation Engine
 Three lenses: Screener + Gap Analysis + Catalyst Picks
-Three personas: Cathie Wood, Druckenmiller, Damodaran
+Four personas: Cathie Wood, Druckenmiller, Damodaran + Li Wei (HK/China)
 Based on the original virattt/ai-hedge-fund investor persona architecture.
 """
 import os
@@ -33,8 +33,32 @@ DAMODARAN = (
     "and explain your valuation logic."
 )
 
+LI_WEI = (
+    "You are Li Wei, Senior Asia Equity Strategist with 20 years covering Greater China and "
+    "ASEAN equities. Former Goldman Sachs Hong Kong desk. You understand HKEX-specific dynamics "
+    "that US-focused analysts miss:\n"
+    "• H-share discounts to ADR equivalents — structural discount that can compress as Southbound "
+    "Connect inflows accelerate\n"
+    "• PBOC policy cycle — rate cuts, RRR reductions, and liquidity injections move HK/China "
+    "equities faster than US Fed moves\n"
+    "• China regulatory environment — platform economy crackdown (2020-22) is largely behind us, "
+    "Beijing now needs big tech to drive growth and employment\n"
+    "• Southbound Stock Connect flows — mainland money chasing HK-listed names with HK dollar "
+    "exposure is a technical tailwind\n"
+    "• Geopolitical risk — Taiwan flashpoints, US-China export controls, Hong Kong political "
+    "stability — always price these in\n"
+    "• Earnings calendar — Chinese companies report on a different schedule; results are "
+    "in HKD/RMB and margins are structurally different from US peers\n"
+    "• Policy signalling — Caixin PMI, State Council announcements, and CITIC/CICC reports "
+    "move before Bloomberg consensus catches up\n"
+    "Given the HK/China watchlist data below, identify 1-2 names with the best near-term "
+    "setup and explain the thesis through your Asia lens. Be direct about the specific "
+    "China/HK catalyst you are watching. Flag any geopolitical or regulatory risks."
+)
+
 EXCLUDE_SUFFIXES = (".HK", ".SS", ".SZ", ".TW", ".KS", ".T")
 EXCLUDE_TICKERS = {"BTC", "ETH", "SOL", "MATIC", "POL", "BTC-USD", "^VIX", "^HSI"}
+HK_CHINA_SUFFIXES = (".HK", ".SS", ".SZ")
 
 
 def _call(system, user, tokens=400):
@@ -63,6 +87,10 @@ def _is_us(ticker):
         if ticker.endswith(s):
             return False
     return True
+
+
+def _is_hk_china(ticker):
+    return any(ticker.endswith(s) for s in HK_CHINA_SUFFIXES)
 
 
 def _screener(holdings, prices):
@@ -118,6 +146,42 @@ def _catalysts(holdings, earnings):
     return out
 
 
+def _hk_screener(holdings, prices):
+    """Screener for HK/China-listed names only."""
+    out = []
+    for ticker, data in holdings.items():
+        if not _is_hk_china(ticker):
+            continue
+        p = prices.get(ticker, {})
+        out.append({
+            "ticker": ticker,
+            "name": data.get("name", ticker),
+            "sector": data.get("sector", ""),
+            "rating": data.get("rating", ""),
+            "change": p.get("change_pct") if p else None,
+            "price": p.get("price") if p else None,
+            "held": (data.get("shares") or 0) > 0,
+            "thesis": data.get("thesis", ""),
+        })
+    out.sort(key=lambda x: (x["change"] is None, -(x["change"] or 0)))
+    return out
+
+
+def _build_hk_data_text(hk_screener):
+    """Format HK/China watchlist data for the Li Wei persona."""
+    if not hk_screener:
+        return "No HK/China names in watchlist."
+    s = "HK/CHINA WATCHLIST (HKEX, Shanghai, Shenzhen listed):\n"
+    for c in hk_screener:
+        chg = (str(round(c["change"], 1)) + "% today") if c["change"] is not None else "price unavailable"
+        held = "HELD" if c["held"] else "WATCHING"
+        rating = c["rating"] or "No rating"
+        s += f"- {c['ticker']} ({c['name']}) | {rating} | {chg} | {c['sector']} | {held}\n"
+        if c["thesis"]:
+            s += f"  Thesis: {c['thesis'][:150]}\n"
+    return s
+
+
 def _build_data_text(screener, gaps, catalyst_list):
     s = "TOP RATED NAMES (US-listed, sorted by momentum):\n"
     for c in screener[:20]:
@@ -151,7 +215,7 @@ def get_recommendations():
     BUY = {"Buy", "Spec. Buy", "Allocate"}
     buy_tickers = [t for t, d in holdings.items() if d.get("rating", "") in BUY]
 
-    executor = ThreadPoolExecutor(max_workers=6)
+    executor = ThreadPoolExecutor(max_workers=7)
 
     # T=0: prices + earnings both start simultaneously
     fp = executor.submit(get_live_prices, tickers)
@@ -161,20 +225,24 @@ def get_recommendations():
     prices = fp.result()
     print("[" + datetime.now().strftime("%H:%M") + "] Prices done. Starting persona debates...")
 
-    # Compute screener + gaps (instant) then kick off personas immediately
+    # Compute screeners + gaps (instant) then kick off all personas immediately
     screener = _screener(holdings, prices)
+    hk_screener = _hk_screener(holdings, prices)
     gaps = _gaps(holdings)
     data_text = _build_data_text(screener, gaps, [])
+    hk_data_text = _build_hk_data_text(hk_screener)
 
-    # Personas run in parallel while earnings still fetching in background
+    # All 4 personas run in parallel while earnings still fetching in background
     fc = executor.submit(_call, CATHIE_WOOD, data_text, 350)
     fd = executor.submit(_call, DRUCKENMILLER, data_text, 350)
     fv = executor.submit(_call, DAMODARAN, data_text, 350)
+    fhk = executor.submit(_call, LI_WEI, hk_data_text, 350)
 
     # Collect all results
     cathie_view = fc.result()
     druck_view = fd.result()
     damodaran_view = fv.result()
+    li_wei_view = fhk.result()
     try:
         earnings_data = fe.result(timeout=25)
     except Exception:
@@ -183,6 +251,7 @@ def get_recommendations():
 
     catalyst_list = _catalysts(holdings, earnings_data)
 
+    # ── US picks synthesis ────────────────────────────────────────────────────
     synthesis_prompt = (
         "You are a senior portfolio manager synthesising views from three legendary investors.\n\n"
         "CATHIE WOOD (ARK Invest - disruptive innovation):\n" + cathie_view + "\n\n"
@@ -206,15 +275,44 @@ def get_recommendations():
         "direct and opinionated, use <b>bold</b> for tickers and verdicts."
     )
 
-    print("[" + datetime.now().strftime("%H:%M") + "] Synthesising final picks...")
-    final = _call(
+    print("[" + datetime.now().strftime("%H:%M") + "] Synthesising US picks...")
+    us_final = _call(
         "You are a decisive senior portfolio manager. Make clear, specific, actionable recommendations.",
         synthesis_prompt, 600
     )
 
+    # ── HK/China synthesis ────────────────────────────────────────────────────
+    hk_synthesis_prompt = (
+        "You are a senior portfolio manager synthesising Li Wei's Asia equity view.\n\n"
+        "LI WEI (Asia Equity Strategist — Greater China):\n" + li_wei_view + "\n\n"
+        "Summarise into 1-2 actionable HK/China picks. For each:\n"
+        "- Ticker + name\n"
+        "- Verdict: Buy / Add / Watch\n"
+        "- The specific HK/China catalyst Li Wei is watching\n"
+        "- Key risk to flag\n\n"
+        "Rules: max 200 words, no tables, number picks 1. 2., "
+        "use <b>bold</b> for tickers. If Li Wei is not bullish on any name, say so explicitly."
+    )
+
+    print("[" + datetime.now().strftime("%H:%M") + "] Synthesising HK/China picks...")
+    hk_final = _call(
+        "You are a decisive senior portfolio manager covering Greater China equities.",
+        hk_synthesis_prompt, 350
+    )
+
     date_str = datetime.now().strftime("%d %B %Y")
-    return ("🎯 <b>AI Stock Picks — " + date_str + "</b>\n\n" + final +
-            "\n\n<i>Cathie Wood (innovation) · Druckenmiller (macro) · Damodaran (valuation)</i>")
+    out = (
+        "🎯 <b>AI Stock Picks — " + date_str + "</b>\n\n"
+        + us_final
+        + "\n\n<i>Cathie Wood (innovation) · Druckenmiller (macro) · Damodaran (valuation)</i>"
+    )
+    if hk_screener:
+        out += (
+            "\n\n🇭🇰 <b>HK/China Picks — Li Wei</b>\n\n"
+            + hk_final
+            + "\n\n<i>Li Wei (Asia Equity Strategist · Greater China)</i>"
+        )
+    return out
 
 
 if __name__ == "__main__":
