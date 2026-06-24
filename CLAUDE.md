@@ -45,7 +45,7 @@ GitHub: github.com/lliu722/ai-hedge-fund
 git add src/tools/telegram_bot.py [other files] && git commit -m "..." && git push origin main
 
 ## Current state (as of 2026-06-24)
-- 27 tools registered in agent
+- 28 tools registered in agent
 - 41 held positions (shares > 0) — portfolio with dollar P&L
 - 57 watchlist names (shares = 0) — monitoring only
 - 98 total in Notion Holdings DB
@@ -96,8 +96,10 @@ If any of the 3 steps is skipped, the deployment is not complete.
 - Research library — SQLite store, auto-saves deep dives + earnings, search_research + save_note tools
 - Custom alert thresholds — `alert NVDA 5` / `alert MU down 3` / `remove alert NVDA` / `show alerts`
 - Weekly P&L digest — unrealised (all positions vs cost, by sector) + realised (closed trades this week); `get_pnl_summary` tool for on-demand
+- Sector rotation monitor — 5-day ETF returns ranked, risk-off/risk-on signal vs defensives
+- Position notes in deep dive — saved notes + prior research auto-injected into every deep dive prompt
 
 ## Next to build
 1. Multi-portfolio support — separate tracking for different accounts
-2. Sector rotation monitor — flag when money is rotating out of a theme
-3. Position notes — attach free-text notes to any holding visible in deep dive
+2. Earnings surprise tracker — log beat/miss history per ticker, surface in deep dive
+3. Macro regime detector — yield curve + credit spreads → risk-on / risk-off / stagflation label
