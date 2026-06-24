@@ -93,6 +93,16 @@ WHEN DISCUSSING ANY COMPANY — always cover these two angles unprompted:
 2. <b>Competitive landscape by business line</b>: break the company into its distinct revenue segments and explain who competes on each one. Example for Uber: Rideshare (Lyft, Didi, Grab), Food Delivery (DoorDash, Deliveroo), Freight (XPO, CH Robinson), Autonomous (Waymo, Tesla). This shows where competition is intense vs where they have breathing room.
 These two points should appear naturally in any company analysis, whether a quick price check, a news summary, or a full deep dive.
 
+WHEN A USER EXPRESSES AN OPINION, INSTINCT, OR GUT FEELING — engage with it directly, never ignore it:
+- If they say "I think this is a good buy" or "my gut says buy" — respond like a sharp analyst: (1) here's what the data says that SUPPORTS your instinct, (2) here's what CHALLENGES it, (3) your verdict on whether their gut is right.
+- Be direct and opinionated. Don't hide behind "it depends." If their instinct is right, say so and explain why. If it's wrong, say so and explain why.
+- Real investors make gut calls. Your job is to pressure-test them with data, not replace them with neutral analysis.
+
+WHEN DISCUSSING POST-EARNINGS MOVES — always explain the paradox if stock moved against the headline:
+- A beat doesn't always mean up. A miss doesn't always mean down. Always explain WHY.
+- Cover: (1) what the actual numbers were vs expectations, (2) what guidance said vs what the market was pricing in, (3) how valuation premium affects the reaction — expensive stocks need blowouts, cheap stocks can rally on inline results, (4) whether the move looks like an overreaction or is fundamentally justified.
+- The "beat but down" pattern (like CBRS: beat revenue + net loss, stock -11%) is common and confusing — always explain it when you see it.
+
 CRITICAL FORMATTING RULES — follow exactly, no exceptions:
 - NEVER use markdown tables (no | pipe characters ever)
 - NEVER use ### or ## or # headers
@@ -333,6 +343,88 @@ llm = ChatDeepSeek(
 )
 
 @tool
+def earnings_reaction(ticker: str) -> str:
+    """
+    Explain why a stock moved the way it did after earnings.
+    Use when the user asks 'why is X up/down after earnings', 'why did X drop despite beating',
+    'what happened to X after results', or shares a screenshot of earnings and wants analysis.
+    Covers: actual vs expected numbers, guidance vs consensus, valuation premium effect,
+    whether the move is justified or an overreaction, and what the setup looks like next.
+    """
+    import requests
+    from src.tools.prices import get_live_prices
+    from src.tools.news_fetcher import get_news_for_tickers
+    from concurrent.futures import ThreadPoolExecutor
+
+    ticker = ticker.upper()
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_price = ex.submit(get_live_prices, [ticker], True)
+        f_news  = ex.submit(get_news_for_tickers, [ticker])
+
+    try:
+        price_data  = f_price.result(timeout=20).get(ticker, {})
+    except Exception:
+        price_data = {}
+    try:
+        news_items  = f_news.result(timeout=20).get(ticker, [])
+    except Exception:
+        news_items = []
+
+    price_context = (
+        f"Current price: ${price_data.get('price', 'N/A')}\n"
+        f"Today's move: {price_data.get('change_pct', 'N/A')}%\n"
+        f"52w High: ${price_data.get('week52_high', 'N/A')} | 52w Low: ${price_data.get('week52_low', 'N/A')}\n"
+        f"P/E: {price_data.get('pe_ratio', 'N/A')} | Market cap: ${(price_data.get('market_cap') or 0):,.0f}"
+    )
+
+    news_context = ""
+    for a in news_items[:6]:
+        news_context += f"• {a['title']}\n"
+        if a.get('content'):
+            news_context += f"  {a['content'][:250]}\n"
+
+    prompt = (
+        f"You are a senior equity analyst explaining {ticker}'s post-earnings move to a portfolio manager.\n\n"
+        f"MARKET DATA:\n{price_context}\n\n"
+        f"RECENT NEWS & EARNINGS COVERAGE:\n{news_context or 'No news found — use training knowledge.'}\n\n"
+        f"Give a structured earnings reaction analysis:\n\n"
+        f"<b>1. WHAT HAPPENED</b>\n"
+        f"Actual results vs expectations — revenue beat/miss, earnings beat/miss, by how much. "
+        f"What did guidance say vs what the market was pricing in?\n\n"
+        f"<b>2. WHY THE STOCK MOVED THIS WAY</b>\n"
+        f"Explain the logic, especially if counter-intuitive (beat but down / miss but up). "
+        f"Cover: guidance disappointment, valuation premium effect (expensive stocks need blowouts), "
+        f"sell-the-news dynamics, thin pre-market volume if relevant.\n\n"
+        f"<b>3. IS THE MOVE JUSTIFIED?</b>\n"
+        f"Is this a rational re-rating or an overreaction? Be direct and opinionated.\n\n"
+        f"<b>4. THE SETUP FROM HERE</b>\n"
+        f"What should an investor watch at the open / over the next session? "
+        f"Is this a buy-the-dip setup or does the fundamental case look impaired?\n\n"
+        f"Max 300 words. Be direct. Use <b>bold</b> for key numbers and verdicts."
+    )
+
+    try:
+        r = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {os.getenv('DEEPSEEK_API_KEY')}", "Content-Type": "application/json"},
+            json={
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 500,
+                "temperature": 0.3,
+            },
+            timeout=45,
+        )
+        if r.status_code == 200:
+            analysis = r.json()["choices"][0]["message"]["content"].strip()
+            return f"📊 <b>Earnings Reaction: {ticker}</b>\n\n{analysis}"
+        return f"❌ API error {r.status_code}"
+    except Exception as e:
+        return f"❌ Error: {str(e)[:150]}"
+
+
+@tool
 def get_portfolio_advice(ticker: str) -> str:
     """
     Portfolio advisor — should I buy this stock? Do I need to sell something first (腾空间)?
@@ -474,6 +566,7 @@ tools = [
     get_sec_filings,
     get_ficc_data,
     get_portfolio_advice,
+    earnings_reaction,
 ]
 
 memory = MemorySaver()
