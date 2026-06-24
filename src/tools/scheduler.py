@@ -437,6 +437,147 @@ def check_price_alerts():
         print(f"Price alert error: {e}")
 
 
+# ── Portfolio Category Map ────────────────────────────────────────────────────
+
+PORTFOLIO_CATEGORIES = {
+    "Memory / Storage":     ["MU", "WDC", "SNDK", "DRAM"],
+    "AI Infrastructure":    ["NVDA", "AMD", "TSM", "ASML", "ALAB", "CRDO", "ARM", "AVGO"],
+    "Networking":           ["GLW", "CSCO", "NOK"],
+    "Energy / Power":       ["GEV", "BE", "SEI", "OKLO", "CEG", "VST", "TLN"],
+    "Banks / Financials":   ["JPM", "MS", "GS", "GE"],
+    "Space":                ["RKLB", "ASTS", "SPCX"],
+    "Software / Data":      ["PLTR", "APP", "MSTR", "GOOGL", "MSFT", "META"],
+    "Defence / Industrials":["LMT"],
+    "Quantum":              ["IONQ"],
+    "Telecom / Optical":    ["LITE"],
+    "Crypto":               ["BTC", "ETH", "SOL"],
+}
+
+
+def _categorise(tickers: list) -> dict:
+    """Map a list of tickers to their categories. Uncategorised go to 'Other'."""
+    result = {cat: [] for cat in PORTFOLIO_CATEGORIES}
+    result["Other"] = []
+    ticker_to_cat = {}
+    for cat, members in PORTFOLIO_CATEGORIES.items():
+        for t in members:
+            ticker_to_cat[t] = cat
+    for t in tickers:
+        cat = ticker_to_cat.get(t, "Other")
+        result[cat].append(t)
+    return {k: v for k, v in result.items() if v}
+
+
+# ── Market Close Alerts ───────────────────────────────────────────────────────
+
+def send_market_close_alert(market: str):
+    """Send end-of-day portfolio summary grouped by category for the closing market."""
+    print(f"[{datetime.now().strftime('%H:%M')}] Market close alert: {market}")
+    try:
+        import requests
+        from src.tools.prices import get_live_prices
+        from src.tools.notify import send_telegram
+        DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+
+        # Determine which tickers to include based on market
+        held = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
+
+        if market == "HK":
+            tickers = [t for t in held if t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ")]
+        elif market == "EU":
+            eu_names = ["ASML"]  # expand as needed
+            tickers = [t for t in held if t in eu_names]
+        else:  # US (default)
+            tickers = [t for t in held if not any(t.endswith(s) for s in [".HK", ".SS", ".SZ", ".TW"])]
+
+        if not tickers:
+            print(f"No held positions for {market} close.")
+            return
+
+        prices = get_live_prices(tickers)
+        categories = _categorise(tickers)
+
+        # Build category blocks
+        cat_blocks = []
+        summary_lines = []  # for DeepSeek context
+        total_winners = total_losers = 0
+
+        for cat, cat_tickers in categories.items():
+            moves = []
+            for t in cat_tickers:
+                d = prices.get(t, {})
+                if not d or d.get("change_pct") is None:
+                    continue
+                chg = d.get("change_pct") or 0
+                price = d.get("price")
+                shares = held.get(t, {}).get("shares", 0)
+                avg_cost = held.get(t, {}).get("avg_cost", 0)
+                pnl = ((price - avg_cost) / avg_cost * 100) if avg_cost and price else 0
+                moves.append((t, chg, price, pnl))
+                if chg > 0:
+                    total_winners += 1
+                else:
+                    total_losers += 1
+
+            if not moves:
+                continue
+
+            moves.sort(key=lambda x: abs(x[1]), reverse=True)
+            avg_chg = sum(m[1] for m in moves) / len(moves)
+            direction = "📈" if avg_chg >= 0 else "📉"
+
+            block = f"{direction} <b>{cat}</b> ({avg_chg:+.1f}% avg)\n"
+            for t, chg, price, pnl in moves:
+                icon = "▲" if chg > 0 else "▼"
+                block += f"  {icon} <b>{fmt(t)}</b>: {chg:+.2f}% • P&L: {pnl:+.1f}%\n"
+            cat_blocks.append(block)
+
+            summary_lines.append(f"{cat}: avg {avg_chg:+.1f}% ({', '.join(f'{t} {c:+.1f}%' for t, c, _, _ in moves[:3])})")
+
+        if not cat_blocks:
+            return
+
+        # DeepSeek synthesis
+        synthesis = ""
+        try:
+            r = requests.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [{
+                        "role": "user",
+                        "content": (
+                            f"Portfolio {market} market close summary. Be direct, 2-3 sentences max.\n\n"
+                            f"Category performance:\n" + "\n".join(summary_lines) +
+                            f"\n\nWhat does today's pattern mean? Any category or stock to watch tomorrow? "
+                            f"Format for Telegram using <b>bold</b> for tickers/themes."
+                        )
+                    }],
+                    "max_tokens": 150,
+                    "temperature": 0.3,
+                },
+                timeout=30,
+            )
+            if r.status_code == 200:
+                synthesis = "\n" + r.json()["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            print(f"Synthesis error: {e}")
+
+        msg = (
+            f"🔔 <b>{market} Close — Portfolio Summary</b>\n"
+            f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n"
+            f"<i>{total_winners} up · {total_losers} down</i>\n\n"
+            + "\n".join(cat_blocks)
+            + synthesis
+        )
+        send_telegram(msg)
+        print(f"[{datetime.now().strftime('%H:%M')}] {market} close alert sent.")
+
+    except Exception as e:
+        print(f"Market close alert error: {e}")
+
+
 # ── Breaking News Alerts ──────────────────────────────────────────────────────
 
 def check_breaking_news():
@@ -646,6 +787,11 @@ def run_scheduler():
 
     # Breaking news — every 2 hours, 7am-11pm HKT
     schedule.every(2).hours.do(check_breaking_news)
+
+    # Market close alerts (UTC times)
+    schedule.every().day.at("08:05").do(lambda: send_market_close_alert("HK"))   # HK close 16:00 HKT
+    schedule.every().day.at("15:35").do(lambda: send_market_close_alert("EU"))   # EU close 23:35 HKT
+    schedule.every().day.at("20:05").do(lambda: send_market_close_alert("US"))   # US close 04:05 HKT+1
 
     while True:
         schedule.run_pending()

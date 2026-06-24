@@ -467,6 +467,13 @@ def handle_message(text: str, chat_id: str):
             send_message(result, chat_id)
             return
 
+        if lowered in ("market close", "us close", "hk close", "eu close", "close summary"):
+            from src.tools.scheduler import send_market_close_alert
+            market = "HK" if "hk" in lowered else "EU" if "eu" in lowered else "US"
+            send_message(f"⏳ Building {market} close summary...", chat_id, show_buttons=False)
+            send_market_close_alert(market)
+            return
+
         if lowered in ("check news", "breaking news", "any news"):
             from src.tools.scheduler import check_breaking_news
             send_message("⏳ Scanning for breaking news...", chat_id, show_buttons=False)
