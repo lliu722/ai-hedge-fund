@@ -774,6 +774,13 @@ def search_research(ticker: str = "", query: str = "") -> str:
 
 
 @tool
+def get_pnl_summary() -> str:
+    """Full P&L snapshot: unrealised (all positions vs cost), top winners/losers, by sector, realised trades this week. Use for 'P&L', 'how am I doing overall', 'weekly P&L', 'realised vs unrealised'."""
+    from src.tools.scheduler import _compute_portfolio_pnl
+    return _compute_portfolio_pnl()
+
+
+@tool
 def manage_alerts(action: str, ticker: str = "", threshold: float = 0, direction: str = "both") -> str:
     """
     Manage custom price alerts. action: 'set', 'remove', 'list'.
@@ -968,6 +975,7 @@ tools = [
     search_research,
     save_note,
     manage_alerts,
+    get_pnl_summary,
 ]
 
 if _MEMORY_BACKEND == "sqlite":

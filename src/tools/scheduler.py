@@ -339,6 +339,123 @@ Rules:
         send_telegram(f"❌ Morning briefing error: {str(e)[:200]}")
 
 
+# ── Weekly P&L Block ─────────────────────────────────────────────────────────
+
+def _compute_portfolio_pnl() -> str:
+    """
+    Build the weekly P&L block:
+    • Unrealised P&L — all held positions vs average cost (total + per category)
+    • Realised P&L — journal entries closed in the last 7 days
+    """
+    try:
+        from src.tools.prices import get_live_prices
+        from src.tools.notion_holdings import get_journal_entries
+        from datetime import timedelta
+
+        held = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
+        if not held:
+            return ""
+
+        prices = get_live_prices(list(held.keys()))
+
+        # ── Unrealised ────────────────────────────────────────────────────────
+        total_value = total_cost = 0.0
+        winners = losers = 0
+        cat_pnl: dict = {}  # category → {value, cost}
+
+        rows = []
+        for t, d in held.items():
+            price = (prices.get(t) or {}).get("price") or 0
+            shares = d.get("shares") or 0
+            avg = d.get("avg_cost") or 0
+            value = shares * price
+            cost = shares * avg
+            pnl_dollar = value - cost
+            pnl_pct = (pnl_dollar / cost * 100) if cost else 0
+            total_value += value
+            total_cost += cost
+            (winners if pnl_pct >= 0 else losers).__class__  # just counting
+            if pnl_pct >= 0:
+                winners += 1
+            else:
+                losers += 1
+
+            # Category bucket
+            sector = d.get("sector", "Other")
+            if sector not in cat_pnl:
+                cat_pnl[sector] = {"value": 0.0, "cost": 0.0}
+            cat_pnl[sector]["value"] += value
+            cat_pnl[sector]["cost"] += cost
+
+            rows.append((t, value, pnl_dollar, pnl_pct))
+
+        rows.sort(key=lambda x: x[2])  # worst to best
+
+        total_pnl = total_value - total_cost
+        total_pnl_pct = (total_pnl / total_cost * 100) if total_cost else 0
+        pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
+
+        msg = f"💼 <b>Portfolio P&L Snapshot</b>\n"
+        msg += f"{pnl_emoji} <b>Total: ${total_value:,.0f}</b> · Unrealised P&L <b>${total_pnl:+,.0f} ({total_pnl_pct:+.1f}%)</b>\n"
+        msg += f"<i>{winners} winners · {losers} losers across {len(rows)} positions</i>\n\n"
+
+        # Top 3 winners and losers
+        best  = [r for r in rows if r[2] >= 0][-3:][::-1]
+        worst = rows[:3]
+        if best:
+            msg += "<b>Top winners:</b>\n"
+            for t, val, dpnl, ppnl in best:
+                msg += f"  🟢 <b>{fmt(t)}</b>: ${dpnl:+,.0f} ({ppnl:+.1f}%) · ${val:,.0f}\n"
+        if worst:
+            msg += "<b>Biggest drags:</b>\n"
+            for t, val, dpnl, ppnl in worst:
+                msg += f"  🔴 <b>{fmt(t)}</b>: ${dpnl:+,.0f} ({ppnl:+.1f}%) · ${val:,.0f}\n"
+
+        # Category breakdown
+        cat_sorted = sorted(cat_pnl.items(), key=lambda x: x[1]["value"] - x[1]["cost"], reverse=True)
+        msg += "\n<b>By sector:</b>\n"
+        for cat, cv in cat_sorted:
+            cpnl = cv["value"] - cv["cost"]
+            cpct = (cpnl / cv["cost"] * 100) if cv["cost"] else 0
+            emoji = "🟢" if cpnl >= 0 else "🔴"
+            msg += f"  {emoji} {cat}: ${cpnl:+,.0f} ({cpct:+.1f}%)\n"
+
+        # ── Realised (journal, last 7 days) ──────────────────────────────────
+        cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        entries = get_journal_entries(status="Closed", limit=50)
+        realised = []
+        for page in entries:
+            props = page.get("properties", {})
+            exit_date = (props.get("Exit Date") or {}).get("date", {})
+            exit_date_str = (exit_date or {}).get("start", "") if exit_date else ""
+            if exit_date_str < cutoff:
+                continue
+            ticker_rt = props.get("Ticker", {}).get("rich_text", [])
+            ticker = ticker_rt[0]["plain_text"] if ticker_rt else "?"
+            pnl = props.get("Realized PnL Pct", {}).get("number")
+            shares = props.get("Shares", {}).get("number") or 0
+            entry_p = props.get("Entry Price", {}).get("number") or 0
+            exit_p = props.get("Exit Price", {}).get("number") or 0
+            dollar_pnl = shares * (exit_p - entry_p) if entry_p else 0
+            if pnl is not None:
+                realised.append((ticker, pnl, dollar_pnl, exit_date_str))
+
+        if realised:
+            total_realised = sum(r[2] for r in realised)
+            realised_emoji = "🟢" if total_realised >= 0 else "🔴"
+            msg += f"\n<b>Realised this week:</b> {realised_emoji} ${total_realised:+,.0f}\n"
+            for t, ppnl, dpnl, dt in sorted(realised, key=lambda x: x[0]):
+                emoji = "🟢" if ppnl >= 0 else "🔴"
+                msg += f"  {emoji} <b>{t}</b>: ${dpnl:+,.0f} ({ppnl:+.1f}%) — closed {dt}\n"
+        else:
+            msg += "\n<i>No closed trades this week.</i>\n"
+
+        return msg
+
+    except Exception as e:
+        return f"<i>P&L block unavailable: {str(e)[:80]}</i>\n"
+
+
 # ── Weekly Macro Digest ───────────────────────────────────────────────────────
 
 def send_weekly_digest():
@@ -384,22 +501,24 @@ def send_weekly_digest():
 
         from src.tools.momentum import get_weekly_momentum_digest
 
-        with ThreadPoolExecutor(max_workers=7) as ex:
-            f_macro_prices = ex.submit(get_live_prices, macro_tickers)
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            f_macro_prices  = ex.submit(get_live_prices, macro_tickers)
             f_sector_prices = ex.submit(get_live_prices, sector_tickers)
-            f_ai_prices = ex.submit(get_live_prices, BRIEFING_TICKERS)
-            f_outside_news = ex.submit(fetch_outside_news)
-            f_macro_news = ex.submit(fetch_macro_news)
-            f_earnings = ex.submit(get_earnings_dates, BRIEFING_TICKERS)
-            f_momentum = ex.submit(get_weekly_momentum_digest)
+            f_ai_prices     = ex.submit(get_live_prices, BRIEFING_TICKERS)
+            f_outside_news  = ex.submit(fetch_outside_news)
+            f_macro_news    = ex.submit(fetch_macro_news)
+            f_earnings      = ex.submit(get_earnings_dates, BRIEFING_TICKERS)
+            f_momentum      = ex.submit(get_weekly_momentum_digest)
+            f_pnl           = ex.submit(_compute_portfolio_pnl)
 
-            macro_prices = f_macro_prices.result()
-            sector_prices = f_sector_prices.result()
-            ai_prices = f_ai_prices.result()
-            outside_news = f_outside_news.result()
-            macro_news = f_macro_news.result()
-            earnings = f_earnings.result()
+            macro_prices    = f_macro_prices.result()
+            sector_prices   = f_sector_prices.result()
+            ai_prices       = f_ai_prices.result()
+            outside_news    = f_outside_news.result()
+            macro_news      = f_macro_news.result()
+            earnings        = f_earnings.result()
             momentum_digest = f_momentum.result()
+            pnl_block       = f_pnl.result()
 
         # Build macro summary
         macro_text = ""
@@ -528,7 +647,7 @@ Rules:
         header = f"📊 <b>Weekly Digest — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
         from src.tools.recommendations import get_recommendations
         picks = get_recommendations()
-        send_telegram(header + digest + "\n\n" + picks)
+        send_telegram(header + pnl_block + "\n" + digest + "\n\n" + picks)
         print(f"[{datetime.now().strftime('%H:%M')}] Weekly digest sent.")
 
     except Exception as e:
