@@ -1,0 +1,84 @@
+# AI Investment Management System
+
+## Identity
+Multi-asset portfolio manager Telegram bot (@AI_InvestorL_bot) on Railway.
+Current theme: AI infrastructure. System is theme-agnostic.
+GitHub: github.com/lliu722/ai-hedge-fund
+
+## File structure (src/tools/)
+- telegram_bot.py — agent setup, callbacks, handle_message, bot loop. 21 tools registered.
+- notion_holdings.py — Notion Holdings DB sync + write-back (add, buy, sell, rate, journal)
+- scheduler.py — 7am briefing, Sunday digest, 2hr news alerts, US/HK/EU close alerts
+- recommendations.py — Cathie Wood + Druckenmiller + Damodaran + Li Wei (HK/China) personas
+- deep_dive.py — 8-section research report ~45s
+- prices.py — yfinance + CoinGecko prices, thread-safe cache
+- earnings_calendar.py — parallel fetch 10 workers
+- ficc.py — FRED API: yield curve, credit spreads, FX
+- valuation.py — DCF + comps valuation monitor
+- risk.py — concentration, correlation, drawdown risk engine Ph1
+- catalyst_calendar.py — upcoming catalysts for held + buy-rated names
+- read_through.py — industry read-through map (14 trigger tickers → affected positions)
+- momentum.py — GitHub commit velocity + arXiv paper count per theme
+- themes.py — THESIS_MAP: ticker → theme mapping
+- news_fetcher.py — Tavily news fetch helper
+- notify.py — Telegram push notification helpers
+- sec_filings.py — SEC EDGAR filing fetcher
+- api.py — FastAPI health endpoint
+
+## Adding a new tool
+1. Add @tool function to telegram_bot.py (all tools live here now, not bot_tools.py)
+2. Add to `tools = [...]` list in telegram_bot.py
+3. Commit and push — Railway auto-deploys in ~2 minutes
+
+## Deploy
+git add src/tools/telegram_bot.py [other files] && git commit -m "..." && git push origin main
+
+## Current state (as of 2026-06-24)
+- 21 tools registered in agent
+- 41 held positions (shares > 0) — portfolio with dollar P&L
+- 57 watchlist names (shares = 0) — monitoring only
+- 98 total in Notion Holdings DB
+
+## Notion — read and log here
+- Architecture & Decision Log: 38770984-77e4-8125-a509-fe1325e133fd
+- Master Plan: 38870984-77e4-81bb-9eab-e4739d14ca4c
+- Holdings DB: 9dd63515-c7ae-4f2c-bbc9-a73c6c65bbd1
+- Trade Journal DB: 57ec5347-fc06-490d-9a60-e99e65a3d9bc
+- Master page: 38870984-77e4-818f-bd8b-ff154aa37a35
+
+## Rules
+- Log every architectural decision to Notion Architecture & Decision Log
+- Update CLAUDE.md after every build session (keep "Built" and "Next to build" accurate)
+- Write memory files after every build session
+- Surgical edits preferred over full file rewrites
+- Always commit and push after each build
+- Never build without logging it
+
+## Built (all shipped)
+- Morning briefing (7am) — prices, geo pulse, read-through, theme sweep
+- Sunday digest — weekly P&L, momentum, sector review
+- Breaking news alerts every 2hrs — DeepSeek scores 8+/10 headlines only
+- Market close alerts (US/HK/EU) + post-market buy/trim/hold advice
+- Portfolio advisor (腾空间) — what to trim to fund next buy
+- Valuation monitor — DCF + comps
+- Risk engine Phase 1 — concentration, correlation, drawdown
+- Catalyst calendar — upcoming events for held + buy-rated names
+- Notion write-back — add, buy, sell, reload, rate commands from bot
+- Trade / Decision Journal — auto-log entries on buy, auto-close on sell with P&L
+- Earnings reaction tool — post-earnings gut check
+- Thesis-aware alerts + recovery watch + peer valuation comparison
+- Multi-theme analysis layer
+- Industry read-through map — 14 triggers → affected positions
+- Li Wei HK/China analyst persona — 4th voice in AI stock picks
+- Daily geopolitical pulse — 4-geography snapshot in briefing + on-demand
+- GitHub + arXiv theme momentum tracker — leading developer signal
+- Earnings transcript analysis — CEO tone, guidance, capex, Q&A extraction
+- Portfolio dollar P&L summary — value, dollar P&L, sorted by size
+- Watchlist rating updater — "rate NVDA buy" → patches Notion Rating field
+
+## Next to build
+1. Research library / RAG — save and search past deep dives, earnings notes, theses
+2. Notion thesis write-back — "set thesis NVDA ..." → updates Thesis (Durable) field
+3. Position sizing calculator — Kelly / fixed-fractional sizing suggestions
+4. Alert customisation — user-configurable alert thresholds from bot
+5. Multi-portfolio support — separate tracking for different accounts
