@@ -45,7 +45,7 @@ GitHub: github.com/lliu722/ai-hedge-fund
 git add src/tools/telegram_bot.py [other files] && git commit -m "..." && git push origin main
 
 ## Current state (as of 2026-06-24)
-- 25 tools registered in agent
+- 26 tools registered in agent
 - 41 held positions (shares > 0) — portfolio with dollar P&L
 - 57 watchlist names (shares = 0) — monitoring only
 - 98 total in Notion Holdings DB
@@ -94,8 +94,8 @@ If any of the 3 steps is skipped, the deployment is not complete.
 - Thesis write-back — "thesis NVDA ..." → patches Thesis (Durable) field in Notion
 - Position sizing calculator — size_position tool, fixed-fractional bands by conviction
 - Research library — SQLite store, auto-saves deep dives + earnings, search_research + save_note tools
+- Custom alert thresholds — `alert NVDA 5` / `alert MU down 3` / `remove alert NVDA` / `show alerts`
 
 ## Next to build
-1. Alert customisation — user-configurable alert thresholds from bot ("alert me when NVDA drops 5%")
+1. Weekly P&L digest with realised vs unrealised breakdown
 2. Multi-portfolio support — separate tracking for different accounts
-3. Weekly P&L digest with realised vs unrealised breakdown
