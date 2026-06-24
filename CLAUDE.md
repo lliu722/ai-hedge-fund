@@ -1,3 +1,14 @@
+# ⚠️ CRITICAL — READ BEFORE EVERY ACTION
+
+After every `git push`, you MUST complete all 3 steps before saying "done". No exceptions, no skipping:
+1. **Notion** — append to Architecture & Decision Log (38770984-77e4-8125-a509-fe1325e133fd)
+2. **CLAUDE.md** — update "Built" and "Next to build"; commit + push the change
+3. **Memory** — update `memory/project_state.md` and `memory/feedback_rules.md`
+
+Deployment is NOT complete until all 3 are done.
+
+---
+
 # AI Investment Management System
 
 ## Identity
