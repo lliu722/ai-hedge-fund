@@ -1,10 +1,12 @@
 import yfinance as yf
 import requests
+import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 _cache = {}
+_cache_lock = threading.Lock()
 _CACHE_SECONDS = 120
 
 # ── Crypto ID map (Notion ticker -> CoinGecko ID) ─────────────────────────────
@@ -61,7 +63,8 @@ def normalize_ticker(ticker: str) -> str:
 
 def _cached(ticker: str, detailed: bool = False):
     key = f"{ticker}:{'detailed' if detailed else 'fast'}"
-    entry = _cache.get(key)
+    with _cache_lock:
+        entry = _cache.get(key)
     if entry:
         ts, data = entry
         if (datetime.now() - ts).total_seconds() < _CACHE_SECONDS:
@@ -72,7 +75,8 @@ def _cached(ticker: str, detailed: bool = False):
 def _store_cache(ticker: str, data: dict, detailed: bool = False):
     if data:
         key = f"{ticker}:{'detailed' if detailed else 'fast'}"
-        _cache[key] = (datetime.now(), data)
+        with _cache_lock:
+            _cache[key] = (datetime.now(), data)
 
 
 # ── Fetchers ──────────────────────────────────────────────────────────────────

@@ -176,7 +176,8 @@ Rules:
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": 600,
                 "temperature": 0.3,
-            }
+            },
+            timeout=60,
         )
 
         briefing = response.json()["choices"][0]["message"]["content"] if response.status_code == 200 else "Could not generate AI briefing."
@@ -216,9 +217,9 @@ def send_weekly_digest():
 
         # Fetch macro indices, sector ETFs, AI watchlist, news in parallel
         def fetch_outside_news():
-            r = requests.get(
+            r = requests.post(
                 "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {os.getenv('TAVILY_API_KEY')}"},
+                headers={"Authorization": f"Bearer {os.getenv('TAVILY_API_KEY')}", "Content-Type": "application/json"},
                 json={
                     "query": "stock market sector rotation theme investing week",
                     "max_results": 8,
@@ -229,9 +230,9 @@ def send_weekly_digest():
             return r.json().get("results", []) if r.status_code == 200 else []
 
         def fetch_macro_news():
-            r = requests.get(
+            r = requests.post(
                 "https://api.tavily.com/search",
-                headers={"Authorization": f"Bearer {os.getenv('TAVILY_API_KEY')}"},
+                headers={"Authorization": f"Bearer {os.getenv('TAVILY_API_KEY')}", "Content-Type": "application/json"},
                 json={
                     "query": "Fed interest rates CPI jobs inflation macro economic outlook week",
                     "max_results": 5,
@@ -371,7 +372,8 @@ Rules:
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": 800,
                 "temperature": 0.4,
-            }
+            },
+            timeout=60,
         )
 
         digest = response.json()["choices"][0]["message"]["content"] if response.status_code == 200 else "Could not generate weekly digest."

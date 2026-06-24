@@ -372,12 +372,10 @@ def check_risk() -> str:
     'how diversified am I', or 'what moves together in my portfolio'.
     """
     from src.tools.risk import get_risk_report
-    from src.tools.notion_holdings import get_holdings_cached
     from src.tools.prices import get_live_prices
-    holdings = get_holdings_cached()
-    held = [t for t, d in holdings.items() if (d.get("shares") or 0) > 0]
-    prices = get_live_prices(held)
-    return get_risk_report(holdings, prices)
+    held_tickers = list(PORTFOLIO.keys())
+    prices = get_live_prices(held_tickers)
+    return get_risk_report(WATCHLIST, prices)
 
 
 @tool
@@ -390,10 +388,7 @@ def get_catalyst_calendar(days_ahead: int = 60) -> str:
     'when is the next FOMC', or 'what conferences are coming up'.
     """
     from src.tools.catalyst_calendar import get_catalyst_calendar as _gc
-    from src.tools.notion_holdings import get_holdings_cached
-    holdings = get_holdings_cached()
-    held = [t for t, d in holdings.items() if (d.get("shares") or 0) > 0]
-    return _gc(held, days_ahead)
+    return _gc(list(PORTFOLIO.keys()), days_ahead)
 
 
 @tool

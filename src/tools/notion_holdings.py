@@ -44,15 +44,23 @@ def get_holdings_from_notion() -> dict:
     }
 
     url = f"https://api.notion.com/v1/databases/{HOLDINGS_DATABASE_ID}/query"
-    payload = {"page_size": 100}
 
     try:
-        response = requests.post(url, headers=headers, json=payload)
-        if response.status_code != 200:
-            print(f"Notion API error {response.status_code} — using fallback.")
-            return FALLBACK_WATCHLIST
-
-        results = response.json().get("results", [])
+        results = []
+        cursor = None
+        while True:
+            payload = {"page_size": 100}
+            if cursor:
+                payload["start_cursor"] = cursor
+            response = requests.post(url, headers=headers, json=payload)
+            if response.status_code != 200:
+                print(f"Notion API error {response.status_code} — using fallback.")
+                return FALLBACK_WATCHLIST
+            body = response.json()
+            results.extend(body.get("results", []))
+            if not body.get("has_more"):
+                break
+            cursor = body.get("next_cursor")
         holdings = {}
 
         for page in results:
