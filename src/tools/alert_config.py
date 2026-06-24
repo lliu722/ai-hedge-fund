@@ -33,6 +33,17 @@ def _init_db():
             )
         """)
         con.execute("CREATE INDEX IF NOT EXISTS idx_alert_ticker ON custom_alerts(ticker)")
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS watchlist_targets (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticker      TEXT NOT NULL UNIQUE,
+                target      REAL NOT NULL,   -- entry price target
+                direction   TEXT NOT NULL,   -- 'below' (buy dip) | 'above' (breakout)
+                note        TEXT,
+                created     TEXT NOT NULL
+            )
+        """)
+        con.execute("CREATE INDEX IF NOT EXISTS idx_wl_ticker ON watchlist_targets(ticker)")
 
 
 _init_db()
@@ -117,6 +128,82 @@ def check_custom_alerts(prices: dict, alerted_cache: dict, today: str) -> list[t
         triggered.append((ticker, change, price, threshold, direction))
 
     return triggered
+
+
+# ── Watchlist Price Targets ───────────────────────────────────────────────────
+
+def set_watchlist_target(ticker: str, target: float, direction: str = "below", note: str = "") -> str:
+    """Set an entry price target for a watchlist name."""
+    ticker = ticker.upper()
+    direction = "above" if direction.lower() in ("above", "breakout", "up") else "below"
+    from datetime import datetime
+    with _conn() as con:
+        con.execute(
+            """INSERT INTO watchlist_targets (ticker, target, direction, note, created)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(ticker) DO UPDATE SET
+                 target=excluded.target, direction=excluded.direction,
+                 note=excluded.note, created=excluded.created""",
+            (ticker, target, direction, note[:200], datetime.now().strftime("%Y-%m-%d %H:%M")),
+        )
+    arrow = "📉 drops below" if direction == "below" else "📈 breaks above"
+    return f"🎯 Target set: alert me when <b>{ticker}</b> {arrow} <b>${target:.2f}</b>"
+
+
+def remove_watchlist_target(ticker: str) -> str:
+    ticker = ticker.upper()
+    with _conn() as con:
+        con.execute("DELETE FROM watchlist_targets WHERE ticker=?", (ticker,))
+    return f"🎯 Target removed for <b>{ticker}</b>."
+
+
+def get_watchlist_targets() -> list[dict]:
+    with _conn() as con:
+        rows = con.execute("SELECT * FROM watchlist_targets ORDER BY ticker").fetchall()
+    return [dict(r) for r in rows]
+
+
+def check_watchlist_targets(prices: dict, alerted_cache: dict, today: str) -> list[tuple]:
+    """
+    Check if any watchlist price targets have been hit.
+    Returns list of (ticker, price, target, direction, note) for triggered targets.
+    Deduped per ticker per day.
+    """
+    targets = get_watchlist_targets()
+    if not targets:
+        return []
+    triggered = []
+    for row in targets:
+        ticker = row["ticker"]
+        target = row["target"]
+        direction = row["direction"]
+        data = prices.get(ticker)
+        if not data or not data.get("price"):
+            continue
+        price = data["price"]
+        fired = (direction == "below" and price <= target) or \
+                (direction == "above" and price >= target)
+        if not fired:
+            continue
+        cache_key = f"wl_target:{ticker}:{today}"
+        if alerted_cache.get(cache_key):
+            continue
+        alerted_cache[cache_key] = True
+        triggered.append((ticker, price, target, direction, row.get("note", "")))
+    return triggered
+
+
+def format_watchlist_targets() -> str:
+    targets = get_watchlist_targets()
+    if not targets:
+        return "🎯 No watchlist targets set.\n\nSet one with: <code>target MRVL below 60</code>"
+    msg = "🎯 <b>Watchlist Targets</b>\n\n"
+    for row in targets:
+        arrow = "📉 below" if row["direction"] == "below" else "📈 above"
+        note = f" — {row['note']}" if row.get("note") else ""
+        msg += f"• <b>{row['ticker']}</b>: {arrow} <b>${row['target']:.2f}</b>{note}\n"
+    msg += "\n<i>Remove with: remove target MRVL</i>"
+    return msg
 
 
 def format_alerts_list() -> str:

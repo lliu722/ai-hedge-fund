@@ -501,7 +501,52 @@ def send_weekly_digest():
 
         from src.tools.momentum import get_weekly_momentum_digest
 
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        def compute_theme_health():
+            """Score each theme 0–10 on weekly momentum + breadth."""
+            try:
+                from src.tools.themes import THESIS_MAP
+                # Group held tickers by theme
+                theme_tickers: dict[str, list] = {}
+                for t, d in WATCHLIST_DATA.items():
+                    if (d.get("shares") or 0) <= 0:
+                        continue
+                    theme = THESIS_MAP.get(t, "Other")
+                    theme_tickers.setdefault(theme, []).append(t)
+                if not theme_tickers:
+                    return ""
+                # Get prices for all held tickers
+                all_held = [t for tlist in theme_tickers.values() for t in tlist]
+                prices_all = get_live_prices(all_held)
+                scores = {}
+                for theme, tickers_in_theme in theme_tickers.items():
+                    if len(tickers_in_theme) < 2:
+                        continue
+                    moves = [prices_all.get(t, {}).get("change_pct") or 0 for t in tickers_in_theme]
+                    avg_move = sum(moves) / len(moves)
+                    breadth = sum(1 for m in moves if m > 0) / len(moves)  # % positive
+                    # Score 0–10: avg move contributes 60%, breadth 40%
+                    move_score   = min(10, max(0, 5 + avg_move * 0.6))
+                    breadth_score = breadth * 10
+                    score = round(move_score * 0.6 + breadth_score * 0.4, 1)
+                    scores[theme] = {
+                        "score": score, "avg_move": avg_move,
+                        "breadth": breadth, "n": len(tickers_in_theme)
+                    }
+                if not scores:
+                    return ""
+                lines = ["<b>🧭 Theme Health Scores (this week)</b>"]
+                for theme, s in sorted(scores.items(), key=lambda x: x[1]["score"], reverse=True):
+                    bar = "█" * int(s["score"] / 2) + "░" * (5 - int(s["score"] / 2))
+                    emoji = "🟢" if s["score"] >= 7 else ("🟡" if s["score"] >= 4 else "🔴")
+                    lines.append(
+                        f"{emoji} <b>{theme}</b> {bar} {s['score']}/10 "
+                        f"({s['avg_move']:+.1f}% avg · {int(s['breadth']*100)}% positive · {s['n']} names)"
+                    )
+                return "\n".join(lines)
+            except Exception as e:
+                return f"Theme health error: {e}"
+
+        with ThreadPoolExecutor(max_workers=9) as ex:
             f_macro_prices  = ex.submit(get_live_prices, macro_tickers)
             f_sector_prices = ex.submit(get_live_prices, sector_tickers)
             f_ai_prices     = ex.submit(get_live_prices, BRIEFING_TICKERS)
@@ -510,6 +555,7 @@ def send_weekly_digest():
             f_earnings      = ex.submit(get_earnings_dates, BRIEFING_TICKERS)
             f_momentum      = ex.submit(get_weekly_momentum_digest)
             f_pnl           = ex.submit(_compute_portfolio_pnl)
+            f_theme_health  = ex.submit(compute_theme_health)
 
             macro_prices    = f_macro_prices.result()
             sector_prices   = f_sector_prices.result()
@@ -519,6 +565,7 @@ def send_weekly_digest():
             earnings        = f_earnings.result()
             momentum_digest = f_momentum.result()
             pnl_block       = f_pnl.result()
+            theme_health    = f_theme_health.result()
 
         # Build macro summary
         macro_text = ""
@@ -645,6 +692,8 @@ Rules:
         digest = response.json()["choices"][0]["message"]["content"] if response.status_code == 200 else "Could not generate weekly digest."
 
         header = f"📊 <b>Weekly Digest — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
+        if theme_health:
+            header += theme_health + "\n\n"
         from src.tools.recommendations import get_recommendations
         picks = get_recommendations()
         send_telegram(header + pnl_block + "\n" + digest + "\n\n" + picks)
@@ -770,7 +819,7 @@ def check_price_alerts():
 
         # ── Custom threshold alerts ───────────────────────────────────────────
         try:
-            from src.tools.alert_config import check_custom_alerts
+            from src.tools.alert_config import check_custom_alerts, check_watchlist_targets
             custom_hits = check_custom_alerts(prices, _custom_alerted, today)
             if custom_hits:
                 custom_lines = []
@@ -778,6 +827,15 @@ def check_price_alerts():
                     arrow = "📈" if change > 0 else "📉"
                     custom_lines.append(f"{arrow} <b>{fmt(t)}</b>: {change:+.2f}% (${price}) — your {threshold:.1f}% {direction} alert")
                 send_telegram("🔔 <b>Custom Alert Triggered</b>\n\n" + "\n".join(custom_lines))
+            # Watchlist price targets
+            wl_hits = check_watchlist_targets(prices, _custom_alerted, today)
+            if wl_hits:
+                wl_lines = []
+                for t, price, target, direction, note in wl_hits:
+                    arrow = "📉" if direction == "below" else "📈"
+                    note_str = f"\n  <i>{note}</i>" if note else ""
+                    wl_lines.append(f"{arrow} <b>{fmt(t)}</b> hit ${price:.2f} (target: {direction} ${target:.2f}){note_str}")
+                send_telegram("🎯 <b>Watchlist Target Hit</b>\n\n" + "\n".join(wl_lines) + "\n\n<i>Time to size in?</i>")
         except Exception as ce:
             print(f"Custom alert check error: {ce}")
 
@@ -1335,10 +1393,17 @@ def send_market_open_alert(market: str):
                 pct = pm["pre_pct"]
                 icon = "▲" if pct > 0 else "▼"
                 pnl_icon = "🟢" if pct > 0 else "🔴"
-                position_lines.append(
+                line = (
                     f"{pnl_icon} <b>{ticker}</b> {icon}{abs(pct):.1f}% pre-mkt "
                     f"(${pm['pre_price']:.2f})"
                 )
+                # Add sizing hint for big moves (>3%) — how many shares = $5k/$10k add
+                if abs(pct) >= 3.0 and pm["pre_price"] > 0:
+                    shares_5k  = int(5000  / pm["pre_price"])
+                    shares_10k = int(10000 / pm["pre_price"])
+                    action = "add" if pct < 0 else "trim"
+                    line += f"\n  💡 {action} hint: ${5000:,}={shares_5k}sh · ${10000:,}={shares_10k}sh"
+                position_lines.append(line)
             else:
                 # Fall back to last session close data
                 p = prices.get(ticker, {})

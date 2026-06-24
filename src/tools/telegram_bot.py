@@ -649,10 +649,59 @@ def get_earnings_transcript(ticker: str) -> str:
                 save_research(ticker, "earnings", result)
             except Exception:
                 pass
+            # Auto-extract and log beat/miss to earnings tracker
+            try:
+                _auto_log_earnings_surprise(ticker, transcript_text, analysis, DEEPSEEK_API_KEY)
+            except Exception:
+                pass
             return result
         return f"❌ API error {r.status_code}"
     except Exception as e:
         return f"❌ Error: {str(e)[:150]}"
+
+
+def _auto_log_earnings_surprise(ticker: str, transcript_text: str, analysis: str, api_key: str):
+    """Extract beat/miss + surprise %s from transcript analysis and auto-log to earnings tracker."""
+    import json as _json
+    extract_prompt = (
+        f"From this earnings call analysis for {ticker}, extract structured data.\n\n"
+        f"ANALYSIS:\n{analysis[:1500]}\n\n"
+        f"Return ONLY a JSON object with these exact keys (use null if not found):\n"
+        f'{{"period": "Q1 2025", "beat_miss": "Beat", '
+        f'"rev_surprise_pct": 3.2, "eps_surprise_pct": 5.1, "stock_reaction": -2.0}}\n\n'
+        f"beat_miss must be exactly one of: Beat, Miss, In-line\n"
+        f"period format: Q1 2025 / Q2 2025 / FY2025\n"
+        f"surprise %s: positive = above consensus, negative = below\n"
+        f"stock_reaction: next-day % move if mentioned, else null\n"
+        f"Return ONLY the JSON, no explanation."
+    )
+    r2 = requests.post(
+        "https://api.deepseek.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"model": "deepseek-chat", "messages": [{"role": "user", "content": extract_prompt}],
+              "max_tokens": 100, "temperature": 0.0},
+        timeout=15,
+    )
+    if r2.status_code != 200:
+        return
+    raw = r2.json()["choices"][0]["message"]["content"].strip()
+    # Strip markdown code fences if present
+    raw = raw.strip("`").replace("json\n", "").strip()
+    data = _json.loads(raw)
+    period   = data.get("period")
+    beat_miss = data.get("beat_miss")
+    if not period or not beat_miss:
+        return
+    from src.tools.research_library import log_earnings_surprise as _les
+    _les(
+        ticker=ticker,
+        period=period,
+        beat_miss=beat_miss,
+        rev_surprise_pct=data.get("rev_surprise_pct"),
+        eps_surprise_pct=data.get("eps_surprise_pct"),
+        stock_reaction=data.get("stock_reaction"),
+        notes="auto-logged from transcript",
+    )
 
 
 @tool
@@ -827,6 +876,57 @@ def list_portfolios() -> str:
     msg += f"\n• <b>All</b> — {sum(1 for d in all_holdings.values() if d.get('shares',0)>0)} held, {sum(1 for d in all_holdings.values() if not d.get('shares',0))} watchlist"
     msg += "\n\n<i>Switch with: <code>switch account ACCOUNT_NAME</code></i>"
     return msg
+
+
+@tool
+def get_theme_health() -> str:
+    """Weekly theme health scores 0–10 for each theme in your portfolio. Score = weekly price momentum + breadth (% of names positive). Use for 'theme health', 'which theme is strongest', 'theme scores'."""
+    from src.tools.prices import get_live_prices
+    from src.tools.themes import THESIS_MAP
+    from src.tools.notion_holdings import get_holdings_cached
+    holdings = get_holdings_cached()
+    theme_tickers: dict[str, list] = {}
+    for t, d in holdings.items():
+        if (d.get("shares") or 0) <= 0:
+            continue
+        theme = THESIS_MAP.get(t, "Other")
+        theme_tickers.setdefault(theme, []).append(t)
+    if not theme_tickers:
+        return "No held positions found."
+    all_held = [t for tlist in theme_tickers.values() for t in tlist]
+    prices_all = get_live_prices(all_held)
+    scores = {}
+    for theme, tlist in theme_tickers.items():
+        if len(tlist) < 2:
+            continue
+        moves = [prices_all.get(t, {}).get("change_pct") or 0 for t in tlist]
+        avg_move = sum(moves) / len(moves)
+        breadth  = sum(1 for m in moves if m > 0) / len(moves)
+        score = round(min(10, max(0, 5 + avg_move * 0.6)) * 0.6 + breadth * 10 * 0.4, 1)
+        scores[theme] = {"score": score, "avg_move": avg_move, "breadth": breadth, "n": len(tlist)}
+    if not scores:
+        return "Not enough positions per theme to score (need ≥2 per theme)."
+    msg = f"🧭 <b>Theme Health Scores</b>\n<i>{datetime.now().strftime('%d %b %Y')}</i>\n\n"
+    for theme, s in sorted(scores.items(), key=lambda x: x[1]["score"], reverse=True):
+        bar   = "█" * int(s["score"] / 2) + "░" * (5 - int(s["score"] / 2))
+        emoji = "🟢" if s["score"] >= 7 else ("🟡" if s["score"] >= 4 else "🔴")
+        msg  += f"{emoji} <b>{theme}</b> {bar} {s['score']}/10\n"
+        msg  += f"   {s['avg_move']:+.1f}% avg · {int(s['breadth']*100)}% names positive · {s['n']} held\n"
+    return msg.strip()
+
+
+@tool
+def manage_watchlist_target(action: str, ticker: str, target_price: float = None,
+                             direction: str = "below", note: str = "") -> str:
+    """Set/remove price targets for watchlist names. action='set'|'remove'|'list'. direction='below' (buy dip) or 'above' (breakout). Use for 'alert me when MRVL hits 60', 'target MRVL below 60', 'remove target MRVL'."""
+    from src.tools.alert_config import set_watchlist_target, remove_watchlist_target, format_watchlist_targets
+    if action == "list":
+        return format_watchlist_targets()
+    if action == "remove":
+        return remove_watchlist_target(ticker)
+    if action == "set" and target_price:
+        return set_watchlist_target(ticker, target_price, direction, note)
+    return "❌ Usage: action='set'|'remove'|'list', ticker, target_price, direction='below'|'above'"
 
 
 @tool
@@ -1113,6 +1213,8 @@ tools = [
     switch_account,
     list_portfolios,
     get_market_open_brief,
+    manage_watchlist_target,
+    get_theme_health,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
@@ -1291,6 +1393,9 @@ def handle_message(text: str, chat_id: str):
         _reload_match      = _cleaned in ("reload holdings", "refresh holdings", "reload", "refresh watchlist")
         _switch_acct_match = re.match(r'^(?:switch\s+(?:account|portfolio|to)\s+|show\s+portfolio\s+)(.+)$', _cleaned, re.IGNORECASE)
         _list_acct_match   = _cleaned in ("list accounts", "list portfolios", "show accounts", "my accounts", "portfolios")
+        _target_set_match  = re.match(r'^(?:target|watch\s+price|entry\s+target)\s+([A-Za-z0-9.\-]+)\s+(below|above|at|under|over)?\s*\$?(\d+(?:\.\d+)?)(.*)?$', _cleaned, re.IGNORECASE)
+        _target_rm_match   = re.match(r'^(?:remove|delete|cancel)\s+target\s+([A-Za-z0-9.\-]+)$', _cleaned, re.IGNORECASE)
+        _target_list_match = _cleaned in ("show targets", "my targets", "list targets", "watchlist targets", "targets")
 
         if _add_match:
             ticker = _add_match.group(1).upper()
@@ -1397,6 +1502,26 @@ def handle_message(text: str, chat_id: str):
                 f"<b>{len(PORTFOLIO)}</b> held positions · <b>{len(WATCHLIST_ONLY)}</b> watchlist",
                 chat_id
             )
+            return
+
+        if _target_set_match:
+            from src.tools.alert_config import set_watchlist_target
+            ticker    = _target_set_match.group(1).upper()
+            direction_raw = (_target_set_match.group(2) or "below").lower()
+            direction = "above" if direction_raw in ("above", "over", "at") else "below"
+            target    = float(_target_set_match.group(3))
+            note      = (_target_set_match.group(4) or "").strip().lstrip("—- ")
+            send_message(set_watchlist_target(ticker, target, direction, note), chat_id)
+            return
+
+        if _target_rm_match:
+            from src.tools.alert_config import remove_watchlist_target
+            send_message(remove_watchlist_target(_target_rm_match.group(1).upper()), chat_id)
+            return
+
+        if _target_list_match:
+            from src.tools.alert_config import format_watchlist_targets
+            send_message(format_watchlist_targets(), chat_id)
             return
 
         if _switch_acct_match:
