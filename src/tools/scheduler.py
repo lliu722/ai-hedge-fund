@@ -59,6 +59,9 @@ SECTOR_ETFS = {
 # Tracks which tickers have already been alerted today — resets at morning briefing
 _alerted_today = {}
 
+# Tracks seen news headlines to avoid duplicate pushes — keyed by title[:80]
+_seen_headlines: set = set()
+
 # ── Market Hours (UTC) ────────────────────────────────────────────────────────
 MARKET_HOURS_UTC = {
     "Korea":  (0*60+0,   6*60+30),
@@ -434,6 +437,141 @@ def check_price_alerts():
         print(f"Price alert error: {e}")
 
 
+# ── Breaking News Alerts ──────────────────────────────────────────────────────
+
+def check_breaking_news():
+    """
+    Push genuinely market-moving news to Telegram — runs every 2 hours, 7am-11pm HKT.
+    2 Tavily searches: held company news + macro/geopolitical.
+    DeepSeek filters for only high-impact headlines (score 8+/10).
+    Deduplicates via _seen_headlines set.
+    """
+    # Only run 7am–11pm HKT (23:00–15:00 UTC)
+    now_utc = datetime.now(timezone.utc)
+    utc_mins = now_utc.hour * 60 + now_utc.minute
+    # 23:00–23:59 UTC = after midnight UTC but counts as morning HKT
+    # 00:00–15:00 UTC = 8am–11pm HKT
+    in_window = (utc_mins >= 23 * 60) or (utc_mins <= 15 * 60)
+    if not in_window:
+        print(f"[{datetime.now().strftime('%H:%M')}] Breaking news: outside HKT window, skipping.")
+        return
+
+    print(f"[{datetime.now().strftime('%H:%M')}] Checking breaking news...")
+    try:
+        import requests
+        DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+        TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+        # Build company name list from top held positions
+        held = [(t, d) for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
+        top_held_names = " ".join(
+            d.get("name", t) for t, d in held[:8]
+        )
+
+        all_articles = []
+
+        # Search 1: held company breaking news
+        try:
+            r1 = requests.post(
+                "https://api.tavily.com/search",
+                headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
+                json={"query": f"breaking news {top_held_names} today", "max_results": 8, "search_depth": "basic"},
+                timeout=10,
+            )
+            if r1.status_code == 200:
+                all_articles += r1.json().get("results", [])
+        except Exception as e:
+            print(f"News search 1 error: {e}")
+
+        # Search 2: macro / geopolitical breaking news
+        try:
+            r2 = requests.post(
+                "https://api.tavily.com/search",
+                headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "query": "breaking news market moving geopolitical trade policy interest rates today",
+                    "max_results": 8,
+                    "search_depth": "basic",
+                },
+                timeout=10,
+            )
+            if r2.status_code == 200:
+                all_articles += r2.json().get("results", [])
+        except Exception as e:
+            print(f"News search 2 error: {e}")
+
+        if not all_articles:
+            print(f"[{datetime.now().strftime('%H:%M')}] Breaking news: no articles returned.")
+            return
+
+        # Dedup against already-seen headlines
+        new_articles = []
+        for a in all_articles:
+            key = a.get("title", "")[:80]
+            if key and key not in _seen_headlines:
+                new_articles.append(a)
+                _seen_headlines.add(key)
+
+        if not new_articles:
+            print(f"[{datetime.now().strftime('%H:%M')}] Breaking news: all {len(all_articles)} headlines already seen.")
+            return
+
+        # Ask DeepSeek to filter for genuinely market-moving news
+        headlines_text = "\n".join(
+            f"{i+1}. {a.get('title', '')} — {a.get('content', '')[:150]}"
+            for i, a in enumerate(new_articles)
+        )
+
+        filter_prompt = f"""You are a senior portfolio manager's news filter.
+Review these headlines and identify ONLY those that are genuinely market-moving for an AI infrastructure equity portfolio
+(holdings include: NVDA, TSM, MU, ASML, AMD, GEV, NVDA, GLW, BE, INTC, GS, JPM, banks, energy, memory/storage).
+
+Score each headline 1-10 for market impact. Return ONLY headlines scoring 8 or above.
+
+For each qualifying headline, reply in this exact format:
+📰 [headline title]
+<i>[1 sentence: why this matters for the portfolio]</i>
+
+If nothing scores 8+, reply exactly: NO_BREAKING_NEWS
+
+Headlines to review:
+{headlines_text}"""
+
+        r = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": filter_prompt}],
+                "max_tokens": 400,
+                "temperature": 0.2,
+            },
+            timeout=30,
+        )
+
+        if r.status_code != 200:
+            print(f"DeepSeek filter error: {r.status_code}")
+            return
+
+        filtered = r.json()["choices"][0]["message"]["content"].strip()
+
+        if "NO_BREAKING_NEWS" in filtered:
+            print(f"[{datetime.now().strftime('%H:%M')}] Breaking news: nothing market-moving filtered through.")
+            return
+
+        from src.tools.notify import send_telegram
+        msg = (
+            f"🚨 <b>Breaking News Alert</b>\n"
+            f"<i>{datetime.now().strftime('%d %b %Y, %H:%M HKT')}</i>\n\n"
+            f"{filtered}"
+        )
+        send_telegram(msg)
+        print(f"[{datetime.now().strftime('%H:%M')}] Breaking news alert sent.")
+
+    except Exception as e:
+        print(f"Breaking news check error: {e}")
+
+
 # ── On-Demand Alert Check ─────────────────────────────────────────────────────
 
 def check_alerts_report() -> str:
@@ -505,6 +643,9 @@ def run_scheduler():
 
     # Price alerts — every 30 mins during market hours
     schedule.every(30).minutes.do(check_price_alerts)
+
+    # Breaking news — every 2 hours, 7am-11pm HKT
+    schedule.every(2).hours.do(check_breaking_news)
 
     while True:
         schedule.run_pending()
