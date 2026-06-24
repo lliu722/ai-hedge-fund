@@ -45,7 +45,7 @@ GitHub: github.com/lliu722/ai-hedge-fund
 git add src/tools/telegram_bot.py [other files] && git commit -m "..." && git push origin main
 
 ## Current state (as of 2026-06-24)
-- 33 tools registered in agent
+- 34 tools registered in agent
 - 41 held positions (shares > 0) — portfolio with dollar P&L
 - 57 watchlist names (shares = 0) — monitoring only
 - 98 total in Notion Holdings DB
@@ -101,6 +101,10 @@ If any of the 3 steps is skipped, the deployment is not complete.
 - Earnings surprise tracker — log_earnings_surprise + get_earnings_history tools; history injected into deep dive
 - Macro regime detector — get_macro_regime() using FRED yield curve + HY OAS + Fed Funds → RISK-ON/RISK-OFF/EASING/STAGFLATION/LATE CYCLE
 - Multi-portfolio support — Account field in Notion, set_active_account filter, switch_account + list_portfolios tools
+- Market open alerts — HK 9:20am HKT + US 9:20am ET Mon–Fri; pre-market movers, earnings today, economic calendar; get_market_open_brief @tool on-demand
+
+## Current state (as of 2026-06-24)
+- 34 tools registered in agent
 
 ## Next to build
 1. Breaking news alerts (Issue #3)
