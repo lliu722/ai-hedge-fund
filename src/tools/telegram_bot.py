@@ -92,57 +92,35 @@ def extract_ticker(text: str, chat_id: str = None) -> str | None:
 
 # ── System Prompt ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = f"""You are an AI investment research assistant covering equities, FICC, commodities and crypto as a multi-asset portfolio manager.
+SYSTEM_PROMPT = f"""You are an AI investment research assistant and multi-asset portfolio manager.
 
-This portfolio runs MULTIPLE independent investment theses simultaneously — not just AI infrastructure:
-• <b>AI Infrastructure</b> — NVDA, AMD, ALAB, CRDO, TSM, ASML, ARM, AVGO (compute buildout supercycle)
-• <b>Memory Cycle</b> — MU, WDC, SNDK (DRAM/NAND oversupply ending, pricing recovery)
-• <b>Energy & Power</b> — GEV, BE, CEG, VST, TLN (AI data centre power shortage, nuclear renaissance)
-• <b>Banks & Rates</b> — JPM, GS, MS (rate normalisation + M&A revival)
-• <b>Space</b> — RKLB, ASTS (direct-to-cell satellite, launch cost deflation)
-• <b>Networking & Optical</b> — GLW, LITE, CSCO (800G optical cycle, fibre shortage)
+This portfolio runs MULTIPLE independent theses — not just AI:
+• <b>AI Infrastructure</b> — NVDA, AMD, ALAB, CRDO, TSM, ASML, ARM, AVGO
+• <b>Memory Cycle</b> — MU, WDC, SNDK (DRAM/NAND pricing recovery)
+• <b>Energy & Power</b> — GEV, BE, CEG, VST, TLN (grid capex, nuclear)
+• <b>Banks & Rates</b> — JPM, GS, MS (rate normalisation, M&A)
+• <b>Space</b> — RKLB, ASTS (direct-to-cell, launch deflation)
+• <b>Networking & Optical</b> — GLW, LITE, CSCO (800G optical cycle)
 • <b>Software & Data</b> — PLTR, APP, MSFT, META, GOOGL
 
-CRITICAL: When discussing any position, always frame it within its PRIMARY thesis — not everything is an AI story.
-MU moves because of DRAM pricing, not because of NVDA. GEV moves because of grid capex, not AI directly.
-GS moves because of M&A deal flow and the yield curve. Treat each thesis independently.
+CRITICAL: Frame every position within its PRIMARY thesis. MU moves on DRAM pricing, not NVDA. GEV moves on grid capex. GS moves on M&A and yield curve. Treat each thesis independently.
 
-You have access to tools for live prices, news, SEC filings, earnings calendars, deep dive research, portfolio data, and theme analysis.
-Always use tools to fetch real data — never make up prices or news.
+Always use tools for live data — never fabricate prices or news.
 
-WHEN DISCUSSING ANY COMPANY — always cover these two angles unprompted:
-1. <b>Peer group</b>: who are the closest competitors? Name them specifically. If the company operates across multiple business lines, name the peer for each line separately.
-2. <b>Competitive landscape by business line</b>: break the company into its distinct revenue segments and explain who competes on each one. Example for Uber: Rideshare (Lyft, Didi, Grab), Food Delivery (DoorDash, Deliveroo), Freight (XPO, CH Robinson), Autonomous (Waymo, Tesla). This shows where competition is intense vs where they have breathing room.
-These two points should appear naturally in any company analysis, whether a quick price check, a news summary, or a full deep dive.
+COMPANY ANALYSIS: Always cover (1) peer group by business line — name the closest competitor for each revenue segment, and (2) where competition is intense vs where they have breathing room.
 
-WHEN A USER EXPRESSES AN OPINION, INSTINCT, OR GUT FEELING — engage with it directly, never ignore it:
-- If they say "I think this is a good buy" or "my gut says buy" — respond like a sharp analyst: (1) here's what the data says that SUPPORTS your instinct, (2) here's what CHALLENGES it, (3) your verdict on whether their gut is right.
-- Be direct and opinionated. Don't hide behind "it depends." If their instinct is right, say so and explain why. If it's wrong, say so and explain why.
-- Real investors make gut calls. Your job is to pressure-test them with data, not replace them with neutral analysis.
+GUT CHECKS: When the user expresses an instinct or opinion, pressure-test it: what the data supports, what challenges it, and your direct verdict. Never hedge with "it depends."
 
-WHEN DISCUSSING VALUATION — never show one ticker's multiples in isolation. Always compare to 2-3 closest peers:
-- Show forward P/E, EV/EBITDA, and revenue growth side by side
-- Give a verdict: is the premium or discount vs peers JUSTIFIED by the growth differential?
-- Example format: "NVDA at 35x fwd P/E vs AMD at 22x — justified: NVDA growing revenue 3x faster (120% vs 40%). At this growth rate NVDA is actually cheaper on a PEG basis."
-- If a stock looks expensive on P/E but has 3x the revenue growth, say so explicitly. If it looks cheap but growth is decelerating, flag that too.
-- Use the get_valuation tool which already fetches peer data — don't make up peer multiples.
+VALUATION: Never show multiples in isolation. Always compare to 2-3 peers — forward P/E, EV/EBITDA, revenue growth — and give a verdict on whether the premium/discount is justified. Use get_valuation for peer data.
 
-WHEN DISCUSSING POST-EARNINGS MOVES — always explain the paradox if stock moved against the headline:
-- A beat doesn't always mean up. A miss doesn't always mean down. Always explain WHY.
-- Cover: (1) what the actual numbers were vs expectations, (2) what guidance said vs what the market was pricing in, (3) how valuation premium affects the reaction — expensive stocks need blowouts, cheap stocks can rally on inline results, (4) whether the move looks like an overreaction or is fundamentally justified.
-- The "beat but down" pattern (like CBRS: beat revenue + net loss, stock -11%) is common and confusing — always explain it when you see it.
+POST-EARNINGS: Always explain counter-intuitive moves (beat but down / miss but up). Cover actual vs expected, guidance vs consensus, valuation premium effect, and whether the move is an overreaction.
 
-CRITICAL FORMATTING RULES — follow exactly, no exceptions:
-- NEVER use markdown tables (no | pipe characters ever)
-- NEVER use ### or ## or # headers
-- NEVER use --- dividers
-- NEVER use bullet points with - (use • instead)
-- Use <b>text</b> for bold only
-- Use <i>text</i> for italics only
-- When showing prices, show each ticker on its own line: 📈 <b>{fmt("NVDA")}</b>: $204.65 (+1.33%)
-- Always show tickers with company names, e.g. {fmt("NVDA")} not just NVDA
-- Keep responses clean — plain text with <b>bold</b> for emphasis
-- ALWAYS respond in English unless the user explicitly writes in Chinese"""
+FORMATTING — no exceptions:
+- No markdown tables, no ### headers, no --- dividers, no - bullets (use •)
+- Bold: <b>text</b> · Italic: <i>text</i>
+- Each price on its own line: 📈 <b>{fmt("NVDA")}</b>: $204.65 (+1.33%)
+- Always show ticker with company name: {fmt("NVDA")} not just NVDA
+- Respond in English unless user writes in Chinese"""
 
 # ── Telegram Helpers ──────────────────────────────────────────────────────────
 
@@ -192,21 +170,14 @@ def get_updates(offset: int = 0) -> list:
 
 @tool
 def deep_dive(ticker: str) -> str:
-    """
-    Run a full AI research deep dive on a stock ticker.
-    Returns bull case, bear case, catalysts, valuation, and a buy/sell verdict.
-    Use when the user asks for analysis, research, a deep dive, or wants to understand a company.
-    """
+    """Full AI research report: bull/bear case, catalysts, valuation, verdict. Use for 'deep dive', 'analyse', 'research X'."""
     from src.tools.deep_dive import deep_dive as _deep_dive
     return _deep_dive(ticker.upper())
 
 
 @tool
 def get_price(ticker: str) -> str:
-    """
-    Get the live price and key market data for a stock ticker.
-    Use when the user asks for a price, stock quote, or market data for a specific company.
-    """
+    """Live price, daily change, 52w high/low, P/E for a ticker."""
     from src.tools.prices import get_live_prices
     data = get_live_prices([ticker.upper()], detailed=True).get(ticker.upper(), {})
     if not data:
@@ -224,11 +195,7 @@ def get_price(ticker: str) -> str:
 
 @tool
 def get_news(ticker: str = None) -> str:
-    """
-    Get the latest news for a specific stock ticker or general macro news.
-    Use when the user asks about news, what happened, or latest developments.
-    If no ticker is specified, return macro news.
-    """
+    """Latest news for a ticker, or macro news if no ticker given."""
     from src.tools.news_fetcher import get_news_for_tickers, get_macro_news
     if ticker:
         t = ticker.upper()
@@ -254,10 +221,7 @@ def get_news(ticker: str = None) -> str:
 
 @tool
 def get_earnings_calendar() -> str:
-    """
-    Get upcoming earnings dates for all watchlist stocks.
-    Use when the user asks about earnings, when companies report, or upcoming events.
-    """
+    """Upcoming earnings dates for all watchlist stocks within 60 days."""
     from src.tools.earnings_calendar import get_earnings_dates
     dates = get_earnings_dates(WATCHLIST_TICKERS)
     msg = "📅 <b>Earnings Calendar</b>\n\n"
@@ -277,11 +241,7 @@ def get_earnings_calendar() -> str:
 
 @tool
 def get_portfolio() -> str:
-    """
-    Show actual held positions with live prices, dollar value, and P&L vs average cost.
-    Use when the user asks about their portfolio, actual holdings, positions with real money,
-    how their investments are doing, total P&L, or portfolio value.
-    """
+    """Held positions with live prices, dollar value, P&L vs avg cost. Use for 'portfolio', 'holdings', 'how am I doing'."""
     from src.tools.prices import get_live_prices
     prices = get_live_prices(list(PORTFOLIO.keys()))
     msg = f"💼 <b>Portfolio — {len(PORTFOLIO)} Held Positions</b>\n"
@@ -336,10 +296,7 @@ def get_portfolio() -> str:
 
 @tool
 def get_watchlist() -> str:
-    """
-    Show watchlist monitoring names — stocks being watched but not yet held.
-    Use when the user asks about their watchlist, names they are monitoring, or stocks they are watching but haven't bought.
-    """
+    """Monitoring names not yet held — live prices and ratings."""
     from src.tools.prices import get_live_prices
     prices = get_live_prices(list(WATCHLIST_ONLY.keys()))
     msg = f"👁 <b>Watchlist — {len(WATCHLIST_ONLY)} Monitoring</b>\n"
@@ -356,10 +313,7 @@ def get_watchlist() -> str:
 
 @tool
 def get_market_briefing() -> str:
-    """
-    Get a market briefing with top moves and macro news.
-    Use when the user asks about the market, morning briefing, how things are today, or what happened overnight.
-    """
+    """Top portfolio moves + macro news snapshot. Use for 'market update', 'what happened today'."""
     from src.tools.news_fetcher import get_macro_news
     from src.tools.prices import get_live_prices
     held_tickers = list(PORTFOLIO.keys())[:8]
@@ -382,10 +336,7 @@ def get_market_briefing() -> str:
 
 @tool
 def get_sec_filings(ticker: str) -> str:
-    """
-    Get recent SEC filings (10-K annual, 10-Q quarterly, 8-K earnings) for a company.
-    Use when the user asks about filings, annual reports, earnings documents, or regulatory filings.
-    """
+    """Recent SEC filings: 10-K, 10-Q, 8-K dates for a company."""
     from src.tools.sec_filings import get_filing_summary
     summary = get_filing_summary(ticker.upper())
     msg = f"📄 <b>SEC Filings: {fmt(ticker)}</b>\n\n"
@@ -405,25 +356,14 @@ llm = ChatDeepSeek(
 
 @tool
 def get_valuation(ticker: str) -> str:
-    """
-    Get detailed valuation metrics for a stock: P/E, forward P/E, PEG, EV/Revenue,
-    EV/EBITDA, Price/Book, margins, ROE, FCF. Asset-class aware — uses P/TBV + ROE for banks.
-    Use when the user asks 'is X cheap or expensive', 'what's the valuation', 'how does X compare
-    to peers on multiples', or wants to understand if a stock is overvalued/undervalued.
-    """
+    """P/E, fwd P/E, PEG, EV/EBITDA, P/B, margins, ROE vs peers. Bank-aware (P/TBV + ROE). Use for 'is X cheap/expensive'."""
     from src.tools.valuation import get_valuation_message
     return get_valuation_message(ticker.upper())
 
 
 @tool
 def check_risk() -> str:
-    """
-    Portfolio risk check: concentration by theme, highly correlated position pairs,
-    single-stock concentration flags. Identifies hidden bets — positions that look
-    diversified but move together.
-    Use when the user asks 'check my risk', 'am I too concentrated', 'what are my biggest risks',
-    'how diversified am I', or 'what moves together in my portfolio'.
-    """
+    """Concentration by theme, correlated pairs (>70%), single-stock flags. Use for 'check my risk', 'am I diversified'."""
     from src.tools.risk import get_risk_report
     from src.tools.prices import get_live_prices
     held_tickers = list(PORTFOLIO.keys())
@@ -433,26 +373,14 @@ def check_risk() -> str:
 
 @tool
 def get_catalyst_calendar(days_ahead: int = 60) -> str:
-    """
-    Forward event calendar: FOMC meetings, major tech conferences (GTC, Hot Chips,
-    Computex, AWS re:Invent), export control review dates, and earnings for held positions.
-    Shows which events affect which holdings and why they matter.
-    Use when the user asks 'what's coming up', 'any catalysts', 'what events should I watch',
-    'when is the next FOMC', or 'what conferences are coming up'.
-    """
+    """Forward events: FOMC, GTC/Computex/Hot Chips, export control dates, earnings. Use for 'what's coming up', 'any catalysts'."""
     from src.tools.catalyst_calendar import get_catalyst_calendar as _gc
     return _gc(list(PORTFOLIO.keys()), days_ahead)
 
 
 @tool
 def earnings_reaction(ticker: str) -> str:
-    """
-    Explain why a stock moved the way it did after earnings.
-    Use when the user asks 'why is X up/down after earnings', 'why did X drop despite beating',
-    'what happened to X after results', or shares a screenshot of earnings and wants analysis.
-    Covers: actual vs expected numbers, guidance vs consensus, valuation premium effect,
-    whether the move is justified or an overreaction, and what the setup looks like next.
-    """
+    """Post-earnings move analysis: actual vs expected, guidance vs consensus, whether the move is justified. Use for 'why did X drop/rally after earnings'."""
     import requests
     from src.tools.prices import get_live_prices
     from src.tools.news_fetcher import get_news_for_tickers
@@ -528,13 +456,7 @@ def earnings_reaction(ticker: str) -> str:
 
 @tool
 def get_portfolio_advice(ticker: str) -> str:
-    """
-    Portfolio advisor — should I buy this stock? Do I need to sell something first (腾空间)?
-    Analyzes the full portfolio allocation, candidate fit, concentration risk, and gives
-    a specific buy/pass verdict with position sizing and what to trim if needed.
-    Use when the user asks 'should I buy X', 'I want to add X', 'thinking of buying X',
-    'what do I sell to buy X', or any question about adding a new position.
-    """
+    """Buy/pass verdict, position sizing, 腾空间 (what to trim to fund it). Use for 'should I buy X', 'thinking of adding X'."""
     import requests
     from src.tools.prices import get_live_prices
     from src.tools.notion_holdings import get_holdings_cached
@@ -648,25 +570,14 @@ def get_portfolio_advice(ticker: str) -> str:
 
 @tool
 def get_ficc_data() -> str:
-    """
-    Get live FICC data: US yield curve, credit spreads, policy rates, and key FX pairs.
-    Use when the user asks about interest rates, bonds, the yield curve, credit spreads,
-    the dollar, FX rates, or macro financial conditions.
-    """
+    """US yield curve, credit spreads, policy rates, key FX pairs. Use for 'rates', 'bonds', 'yield curve', 'dollar'."""
     from src.tools.ficc import get_ficc_message
     return get_ficc_message()
 
 
 @tool
 def get_earnings_transcript(ticker: str) -> str:
-    """
-    Pull and summarise the most recent earnings call transcript for a company.
-    Extracts: CEO tone, revenue/EPS guidance vs expectations, capex and investment
-    language, key risks flagged by management, and the most important analyst Q&A exchange.
-    Use when the user asks: 'what did [CEO] say on the call?', 'earnings call summary',
-    'what was the guidance?', 'transcript highlights', 'what did management say about capex?',
-    'conference call takeaways for [ticker]'.
-    """
+    """Earnings call summary: CEO tone, guidance vs expectations, capex language, key risk, best analyst Q&A. Use for 'what did management say', 'transcript', 'call highlights'."""
     ticker = ticker.upper()
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
@@ -678,7 +589,7 @@ def get_earnings_transcript(ticker: str) -> str:
             "https://api.tavily.com/search",
             headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
             json={
-                "query": f"{ticker} earnings call transcript CEO guidance capex 2026 Q1 Q2",
+                "query": f"{ticker} earnings call transcript CEO guidance capex {datetime.now().year} Q1 Q2",
                 "max_results": 5,
                 "search_depth": "advanced",
             },
@@ -734,31 +645,14 @@ def get_earnings_transcript(ticker: str) -> str:
 
 @tool
 def update_rating(ticker: str, rating: str) -> str:
-    """
-    Update the investment rating for a ticker in the Notion watchlist.
-    Valid ratings: Buy, Spec. Buy, Allocate, Hold, Watchlist, Researching, Sell.
-    Use when the user says: 'rate NVDA buy', 'upgrade MU to buy', 'downgrade INTC to hold',
-    'mark ALAB as spec buy', 'set RKLB to watchlist', 'rate [ticker] [rating]'.
-    """
+    """Update Notion rating for a ticker. Valid: Buy, Spec. Buy, Allocate, Hold, Watchlist, Researching, Sell."""
     from src.tools.notion_holdings import update_rating as _update_rating
     return _update_rating(ticker.upper(), rating)
 
 
 @tool
 def get_theme_momentum(theme: str = "all") -> str:
-    """
-    GitHub commit velocity + arXiv paper volume as leading indicators of thesis momentum.
-    Shows whether developer/research activity on a theme is Accelerating, Stable, or Cooling —
-    typically 6-12 months before the stock moves reflect it.
-
-    Available themes: AI Infrastructure, Software & Data, Memory Cycle,
-    Networking & Optical, Quantum, Space, Energy & Power.
-    Pass theme="all" for a full sweep across all tracked themes.
-
-    Use when the user asks: 'what's the GitHub momentum', 'is AI infrastructure thesis
-    still accelerating', 'developer signal on quantum', 'arXiv paper volume',
-    'theme momentum', 'leading indicators for [theme]'.
-    """
+    """GitHub commit velocity + arXiv paper volume per theme. Themes: AI Infrastructure, Memory Cycle, Networking & Optical, Software & Data, Quantum, Space, Energy & Power. Pass 'all' for full sweep."""
     from src.tools.momentum import get_theme_momentum as _gtm
     t = None if theme.lower() in ("all", "everything", "") else theme
     return _gtm(t)
@@ -766,14 +660,7 @@ def get_theme_momentum(theme: str = "all") -> str:
 
 @tool
 def get_geopolitical_pulse() -> str:
-    """
-    Live geopolitical snapshot — 1 sentence per geography on the key risk or
-    development today and its market implication.
-    Covers: US Policy, China/Taiwan, Europe, Middle East.
-    Use when the user asks: 'what's the geopolitical situation', 'any geo risk today',
-    'what's happening in China/Taiwan', 'Middle East update', 'macro risk pulse',
-    'geopolitical briefing'.
-    """
+    """Live geo snapshot: US Policy, China/Taiwan, Europe, Middle East — 1 market-impact sentence each."""
     from src.tools.scheduler import fetch_geopolitical_pulse
     pulse = fetch_geopolitical_pulse()
     if not pulse:
@@ -783,33 +670,16 @@ def get_geopolitical_pulse() -> str:
 
 @tool
 def get_read_through(ticker: str) -> str:
-    """
-    Industry read-through analysis: when a major company moves or reports earnings,
-    identify which held portfolio positions are affected and synthesize the implications.
-
-    Mapped triggers: NVDA, AMD, TSM, ASML, MU, WDC, GEV, CEG, PLTR, ASTS, GLW,
-    JPM, MSFT, META, GOOGL.
-
-    Use when the user asks: 'NVDA just beat — what does that mean for my other positions?',
-    'what's the read-through from TSM earnings?', 'MU is up 10% — does that help WDC?',
-    'what does MSFT capex mean for ALAB?', 'earnings read-through for [ticker]'.
-    """
+    """Industry chain-reaction: when a trigger ticker moves, identify affected portfolio positions. Triggers: NVDA, AMD, TSM, ASML, MU, WDC, GEV, CEG, PLTR, ASTS, GLW, JPM, MSFT, META, GOOGL."""
     from src.tools.read_through import get_read_through_analysis
-    # Strip common suffixes the user might add
-    import re as _re
-    t = _re.sub(r'\s+(earnings|results|report|news|beat|miss|guidance).*$', '', ticker.strip(), flags=_re.IGNORECASE).upper()
+    t = re.sub(r'\s+(earnings|results|report|news|beat|miss|guidance).*$', '', ticker.strip(), flags=re.IGNORECASE).upper()
     held = list(PORTFOLIO.keys())
     return get_read_through_analysis(t, held)
 
 
 @tool
 def get_decision_journal(filter: str = "all") -> str:
-    """
-    Show the Decision Journal — a log of all trade decisions with thesis, rationale, and P&L outcomes.
-    Use filter='open' for active trades, 'closed' for completed trades, 'all' for everything.
-    Use when the user asks: 'show my journal', 'trade log', 'decision journal',
-    'what trades did I make', 'how did my trades do', 'journal summary', 'trade history'.
-    """
+    """Trade log with rationale and realised P&L. filter: 'open', 'closed', or 'all'."""
     from src.tools.notion_holdings import get_journal_entries
 
     status = None
@@ -888,19 +758,7 @@ def get_decision_journal(filter: str = "all") -> str:
 
 @tool
 def get_theme_analysis(theme: str) -> str:
-    """
-    Deep analysis of a specific investment thesis / theme in the portfolio.
-    Covers: thesis health (on track / watch / concern), latest news specific to
-    that theme's signals, and one thing to watch in the next 2 weeks.
-
-    Available themes: AI Infrastructure, Memory Cycle, Energy & Power, Banks & Rates,
-    Space, Networking & Optical, Software & Data, Quantum, Defence, Crypto.
-
-    Use when the user asks about a theme, sector, or macro trade — e.g. 'how is the
-    memory cycle trade doing', 'update on energy positions', 'are banks still a buy',
-    'space thesis check', 'how is the non-AI part of the book doing'.
-    Also use when the user asks about 大盘 or the broader market picture.
-    """
+    """Thesis health check for a theme: on track/watch/concern, latest signals, one thing to watch. Themes: AI Infrastructure, Memory Cycle, Energy & Power, Banks & Rates, Space, Networking & Optical, Software & Data, Quantum, Defence, Crypto."""
     from src.tools.themes import get_theme_analysis as _gta, get_tickers_by_theme
     from src.tools.prices import get_live_prices
 
