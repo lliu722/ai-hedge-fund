@@ -468,6 +468,55 @@ def _categorise(tickers: list) -> dict:
     return {k: v for k, v in result.items() if v}
 
 
+# ── Post-Market Advice ────────────────────────────────────────────────────────
+
+def _post_market_advice(summary_lines: list, held: dict) -> str:
+    """Generate targeted buy/trim/hold advice based on today's close moves."""
+    try:
+        import requests
+        DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+
+        # Build P&L context for held positions
+        pnl_lines = []
+        for t, d in held.items():
+            shares = d.get("shares", 0)
+            avg_cost = d.get("avg_cost", 0)
+            name = d.get("name", t)
+            if avg_cost:
+                pnl_lines.append(f"{t} ({name}): avg cost ${avg_cost:.2f}, {shares} shares")
+
+        prompt = (
+            "You are a portfolio manager reviewing today's close. Give specific, actionable advice.\n\n"
+            "TODAY'S CATEGORY MOVES:\n"
+            + "\n".join(summary_lines) + "\n\n"
+            "PORTFOLIO POSITIONS (avg costs):\n"
+            + "\n".join(pnl_lines[:20]) + "\n\n"
+            "Based on today's moves and the portfolio's average costs, give three sections:\n\n"
+            "<b>🟢 Consider Adding</b> — names that dipped today and remain in thesis, good add point\n"
+            "<b>🔴 Consider Trimming</b> — names up significantly where taking some profit makes sense\n"
+            "<b>⚪ Hold / Watch</b> — key names to monitor tomorrow and why\n\n"
+            "Rules: max 200 words, 2-3 names per section max, be specific about WHY (reference today's move or P&L), "
+            "use <b>bold</b> for tickers. No generic advice."
+        )
+
+        r = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 350,
+                "temperature": 0.3,
+            },
+            timeout=30,
+        )
+        if r.status_code == 200:
+            return r.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"Post-market advice error: {e}")
+    return ""
+
+
 # ── Market Close Alerts ───────────────────────────────────────────────────────
 
 def send_market_close_alert(market: str):
@@ -571,6 +620,13 @@ def send_market_close_alert(market: str):
             + "\n".join(cat_blocks)
             + synthesis
         )
+
+        # For US close: append buy/trim/hold advice based on today's moves
+        if market == "US":
+            advice = _post_market_advice(summary_lines, held)
+            if advice:
+                msg += f"\n\n{advice}"
+
         send_telegram(msg)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} close alert sent.")
 
