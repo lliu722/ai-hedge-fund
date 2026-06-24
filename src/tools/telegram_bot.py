@@ -328,6 +328,126 @@ llm = ChatDeepSeek(
 )
 
 @tool
+def get_portfolio_advice(ticker: str) -> str:
+    """
+    Portfolio advisor — should I buy this stock? Do I need to sell something first (腾空间)?
+    Analyzes the full portfolio allocation, candidate fit, concentration risk, and gives
+    a specific buy/pass verdict with position sizing and what to trim if needed.
+    Use when the user asks 'should I buy X', 'I want to add X', 'thinking of buying X',
+    'what do I sell to buy X', or any question about adding a new position.
+    """
+    import requests
+    from src.tools.prices import get_live_prices
+    from src.tools.notion_holdings import get_holdings_cached
+    from src.tools.scheduler import PORTFOLIO_CATEGORIES
+
+    ticker = ticker.upper()
+    holdings = get_holdings_cached()
+    held = {t: d for t, d in holdings.items() if (d.get("shares") or 0) > 0}
+    all_tickers = list(held.keys()) + ([ticker] if ticker not in held else [])
+
+    prices = get_live_prices(all_tickers)
+
+    # Compute portfolio value and allocations
+    total_value = 0.0
+    positions = {}
+    for t, d in held.items():
+        p = prices.get(t, {}).get("price") or 0
+        shares = d.get("shares") or 0
+        avg = d.get("avg_cost") or 0
+        val = p * shares
+        total_value += val
+        pnl = ((p - avg) / avg * 100) if avg else 0
+        positions[t] = {
+            "name": d.get("name", t),
+            "sector": d.get("sector", ""),
+            "value": val,
+            "pnl": pnl,
+            "shares": shares,
+            "avg_cost": avg,
+            "price": p,
+            "rating": d.get("rating", ""),
+        }
+
+    # Category breakdown
+    cat_map = {}
+    for cat, members in PORTFOLIO_CATEGORIES.items():
+        cat_val = sum(positions[t]["value"] for t in members if t in positions)
+        if cat_val > 0:
+            cat_map[cat] = cat_val
+
+    cat_text = ""
+    for cat, val in sorted(cat_map.items(), key=lambda x: -x[1]):
+        pct = val / total_value * 100 if total_value else 0
+        cat_text += f"  {cat}: {pct:.1f}% (${val:,.0f})\n"
+
+    # Top 10 positions by size
+    top10 = sorted(positions.items(), key=lambda x: -x[1]["value"])[:10]
+    top10_text = ""
+    for t, d in top10:
+        pct = d["value"] / total_value * 100 if total_value else 0
+        top10_text += f"  {t} ({d['name']}): {pct:.1f}% • P&L {d['pnl']:+.1f}% • {d['sector']}\n"
+
+    # Candidates with big gains (trim candidates)
+    gainers = sorted(positions.items(), key=lambda x: -x[1]["pnl"])
+    trim_candidates = ""
+    for t, d in gainers[:6]:
+        pct = d["value"] / total_value * 100 if total_value else 0
+        trim_candidates += f"  {t}: P&L {d['pnl']:+.1f}% ({pct:.1f}% of portfolio)\n"
+
+    # Candidate ticker info
+    cand = holdings.get(ticker, {})
+    cand_price = prices.get(ticker, {})
+    cand_text = (
+        f"Ticker: {ticker}\n"
+        f"Name: {cand.get('name', 'Unknown')}\n"
+        f"Sector: {cand.get('sector', 'Unknown')}\n"
+        f"Rating: {cand.get('rating', 'Not in watchlist')}\n"
+        f"Current price: ${cand_price.get('price', 'N/A')}\n"
+        f"Today: {cand_price.get('change_pct', 'N/A')}%\n"
+        f"Already held: {'Yes — ' + str(cand.get('shares', 0)) + ' shares' if ticker in held else 'No'}\n"
+        f"Thesis: {cand.get('thesis', 'None on file')[:200]}\n"
+    )
+
+    prompt = (
+        f"You are a senior portfolio manager advising on whether to add {ticker} to the portfolio.\n\n"
+        f"PORTFOLIO SUMMARY:\n"
+        f"Total value: ${total_value:,.0f} across {len(held)} positions\n\n"
+        f"CATEGORY ALLOCATION:\n{cat_text}\n"
+        f"TOP 10 POSITIONS:\n{top10_text}\n"
+        f"BIGGEST WINNERS (trim candidates for 腾空間):\n{trim_candidates}\n"
+        f"CANDIDATE:\n{cand_text}\n"
+        f"Answer these questions directly:\n"
+        f"1. <b>BUY or PASS?</b> — Does {ticker} fit the portfolio? Any concentration risk?\n"
+        f"2. <b>Position size</b> — If buying, how much? (% of portfolio, rough $ amount at ${total_value:,.0f} total)\n"
+        f"3. <b>腾空間 — Make room?</b> — Should you sell something first to fund it? "
+        f"If yes: which specific position to trim, how much, and why that one?\n"
+        f"4. <b>Timing</b> — Buy now or wait for a better entry?\n\n"
+        f"Max 250 words. Be specific and opinionated. Use <b>bold</b> for tickers and key verdicts. "
+        f"No generic advice."
+    )
+
+    try:
+        r = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {os.getenv('DEEPSEEK_API_KEY')}", "Content-Type": "application/json"},
+            json={
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 450,
+                "temperature": 0.3,
+            },
+            timeout=45,
+        )
+        if r.status_code == 200:
+            advice = r.json()["choices"][0]["message"]["content"].strip()
+            return f"🧠 <b>Portfolio Advisor: {ticker}</b>\n\n{advice}"
+        return f"❌ API error {r.status_code}"
+    except Exception as e:
+        return f"❌ Error: {str(e)[:150]}"
+
+
+@tool
 def get_ficc_data() -> str:
     """
     Get live FICC data: US yield curve, credit spreads, policy rates, and key FX pairs.
@@ -348,6 +468,7 @@ tools = [
     get_market_briefing,
     get_sec_filings,
     get_ficc_data,
+    get_portfolio_advice,
 ]
 
 memory = MemorySaver()
