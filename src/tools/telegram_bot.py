@@ -626,6 +626,26 @@ def get_ficc_data() -> str:
 
 
 @tool
+def get_theme_momentum(theme: str = "all") -> str:
+    """
+    GitHub commit velocity + arXiv paper volume as leading indicators of thesis momentum.
+    Shows whether developer/research activity on a theme is Accelerating, Stable, or Cooling —
+    typically 6-12 months before the stock moves reflect it.
+
+    Available themes: AI Infrastructure, Software & Data, Memory Cycle,
+    Networking & Optical, Quantum, Space, Energy & Power.
+    Pass theme="all" for a full sweep across all tracked themes.
+
+    Use when the user asks: 'what's the GitHub momentum', 'is AI infrastructure thesis
+    still accelerating', 'developer signal on quantum', 'arXiv paper volume',
+    'theme momentum', 'leading indicators for [theme]'.
+    """
+    from src.tools.momentum import get_theme_momentum as _gtm
+    t = None if theme.lower() in ("all", "everything", "") else theme
+    return _gtm(t)
+
+
+@tool
 def get_geopolitical_pulse() -> str:
     """
     Live geopolitical snapshot — 1 sentence per geography on the key risk or
@@ -808,6 +828,7 @@ tools = [
     check_risk,
     get_catalyst_calendar,
     get_theme_analysis,
+    get_theme_momentum,
     get_geopolitical_pulse,
     get_read_through,
     get_decision_journal,

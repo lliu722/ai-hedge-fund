@@ -379,13 +379,16 @@ def send_weekly_digest():
         macro_tickers = list(MACRO_TICKERS.keys())
         sector_tickers = list(SECTOR_ETFS.keys())
 
-        with ThreadPoolExecutor(max_workers=5) as ex:
+        from src.tools.momentum import get_weekly_momentum_digest
+
+        with ThreadPoolExecutor(max_workers=7) as ex:
             f_macro_prices = ex.submit(get_live_prices, macro_tickers)
             f_sector_prices = ex.submit(get_live_prices, sector_tickers)
             f_ai_prices = ex.submit(get_live_prices, BRIEFING_TICKERS)
             f_outside_news = ex.submit(fetch_outside_news)
             f_macro_news = ex.submit(fetch_macro_news)
             f_earnings = ex.submit(get_earnings_dates, BRIEFING_TICKERS)
+            f_momentum = ex.submit(get_weekly_momentum_digest)
 
             macro_prices = f_macro_prices.result()
             sector_prices = f_sector_prices.result()
@@ -393,6 +396,7 @@ def send_weekly_digest():
             outside_news = f_outside_news.result()
             macro_news = f_macro_news.result()
             earnings = f_earnings.result()
+            momentum_digest = f_momentum.result()
 
         # Build macro summary
         macro_text = ""
@@ -470,7 +474,10 @@ WHAT'S HOT OUTSIDE AI THIS WEEK:
 MACRO & ECONOMIC NEWS:
 {macro_news_text}
 
-Write a weekly digest covering these 5 sections:
+DEVELOPER SIGNAL (GitHub commit velocity + arXiv paper volume this week):
+{momentum_digest}
+
+Write a weekly digest covering these 6 sections:
 
 1. MACRO PICTURE
 How did global markets perform this week? What does it mean for risk appetite? (2-3 sentences)
@@ -484,11 +491,14 @@ What sectors or themes moved meaningfully this week outside AI? Focus on real mo
 4. EARNINGS WATCH NEXT WEEK
 What's reporting and what to watch for. (2-3 sentences)
 
-5. ONE THEME TO WATCH
+5. DEVELOPER SIGNAL
+Use the GitHub + arXiv momentum data below. Which theme has the most accelerating developer activity this week? What does it signal for that thesis 6-12 months out? (2-3 sentences)
+
+6. ONE THEME TO WATCH
 One emerging idea or macro development that isn't consensus yet but is worth monitoring. Be specific and opinionated. (2-3 sentences)
 
 Rules:
-- Maximum 400 words total
+- Maximum 500 words total
 - No markdown tables, no ### headers, no --- dividers
 - Use • for bullet points
 - Be direct and opinionated — no generic statements
@@ -504,7 +514,7 @@ Rules:
             json={
                 "model": "deepseek-chat",
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 800,
+                "max_tokens": 1000,
                 "temperature": 0.4,
             },
             timeout=60,
