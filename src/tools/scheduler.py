@@ -1194,14 +1194,222 @@ def check_alerts_report() -> str:
         return f"❌ Alert check error: {str(e)[:200]}"
 
 
+# ── Market Open Alerts ────────────────────────────────────────────────────────
+
+def send_market_open_alert(market: str):
+    """
+    Fire just before market open with a tight, action-focused brief:
+    - Your held positions + pre-market % move (US) or prior-session move (HK)
+    - Today's earnings calls for names you hold or watch
+    - Economic calendar (Tavily) + overnight macro headline
+    No DeepSeek synthesis — raw data is faster and more useful at open time.
+    """
+    print(f"[{datetime.now().strftime('%H:%M')}] Market open alert: {market}")
+    try:
+        import requests
+        from src.tools.prices import get_live_prices, normalize_ticker
+        from src.tools.notify import send_telegram
+        import yfinance as yf
+
+        TAVILY_KEY = os.getenv("TAVILY_API_KEY")
+        held = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
+
+        # ── Segment tickers by market ──────────────────────────────────────────
+        if market == "HK":
+            mkt_tickers = [t for t in held if t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ")]
+            mkt_label = "🇭🇰 HK Open"
+            mkt_time  = "9:30am HKT"
+        else:  # US
+            mkt_tickers = [t for t in held if not any(t.endswith(s) for s in [".HK", ".SS", ".SZ", ".TW"])]
+            mkt_label = "🇺🇸 US Open"
+            mkt_time  = "9:30am ET"
+
+        if not mkt_tickers:
+            print(f"No held positions for {market} open alert.")
+            return
+
+        # ── Parallel fetches ───────────────────────────────────────────────────
+        def fetch_pre_market_moves():
+            """Pre-market % vs previous close for US tickers via yfinance fast_info."""
+            moves = {}
+            if market != "US":
+                return moves
+            for ticker in mkt_tickers[:15]:  # cap at 15 to stay fast
+                try:
+                    yfk = normalize_ticker(ticker)
+                    if not yfk or yfk.startswith("CRYPTO:"):
+                        continue
+                    fi = yf.Ticker(yfk).fast_info
+                    pre  = getattr(fi, "pre_market_price", None)
+                    prev = getattr(fi, "previous_close", None)
+                    if pre and prev and prev > 0:
+                        pct = (pre - prev) / prev * 100
+                        moves[ticker] = {"pre_price": pre, "prev_close": prev, "pre_pct": pct}
+                except Exception:
+                    pass
+            return moves
+
+        def fetch_regular_prices():
+            """Regular session prices (last close) for all market tickers."""
+            return get_live_prices(mkt_tickers)
+
+        def fetch_earnings_today():
+            """Tavily: earnings calls scheduled for today in this market."""
+            query = (
+                "Hong Kong earnings results today announcement" if market == "HK"
+                else "US earnings calls today before market open after hours schedule"
+            )
+            try:
+                r = requests.post(
+                    "https://api.tavily.com/search",
+                    headers={"Authorization": f"Bearer {TAVILY_KEY}", "Content-Type": "application/json"},
+                    json={"query": query, "max_results": 5, "search_depth": "basic"},
+                    timeout=10,
+                )
+                return r.json().get("results", []) if r.status_code == 200 else []
+            except Exception:
+                return []
+
+        def fetch_economic_calendar():
+            """Tavily: key economic data releases due today."""
+            if market == "HK":
+                query = "China economic data release today Hong Kong"
+            else:
+                query = f"US economic calendar data release today {datetime.now().strftime('%B %Y')}"
+            try:
+                r = requests.post(
+                    "https://api.tavily.com/search",
+                    headers={"Authorization": f"Bearer {TAVILY_KEY}", "Content-Type": "application/json"},
+                    json={"query": query, "max_results": 4, "search_depth": "basic"},
+                    timeout=10,
+                )
+                return r.json().get("results", []) if r.status_code == 200 else []
+            except Exception:
+                return []
+
+        def fetch_overnight_news():
+            """What happened overnight / before this open."""
+            if market == "HK":
+                query = "US market overnight results Asia open today"
+            else:
+                query = "pre-market news US stocks today morning movers"
+            try:
+                r = requests.post(
+                    "https://api.tavily.com/search",
+                    headers={"Authorization": f"Bearer {TAVILY_KEY}", "Content-Type": "application/json"},
+                    json={"query": query, "max_results": 5, "search_depth": "basic"},
+                    timeout=10,
+                )
+                return r.json().get("results", []) if r.status_code == 200 else []
+            except Exception:
+                return []
+
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            f_pre    = ex.submit(fetch_pre_market_moves)
+            f_prices = ex.submit(fetch_regular_prices)
+            f_earn   = ex.submit(fetch_earnings_today)
+            f_econ   = ex.submit(fetch_economic_calendar)
+            f_news   = ex.submit(fetch_overnight_news)
+
+            pre_moves  = f_pre.result(timeout=20)
+            prices     = f_prices.result(timeout=20)
+            earn_news  = f_earn.result(timeout=15)
+            econ_news  = f_econ.result(timeout=15)
+            overnight  = f_news.result(timeout=15)
+
+        # ── Build message ──────────────────────────────────────────────────────
+        now_str = datetime.now().strftime("%d %b %Y, %H:%M")
+        msg = f"🔔 <b>{mkt_label}</b> — {mkt_time}\n<i>{now_str} HKT</i>\n\n"
+
+        # Section 1: your positions + pre-market moves (US) or last close (HK)
+        msg += f"<b>📊 Your {market} Positions</b>\n"
+        position_lines = []
+        for ticker in mkt_tickers:
+            d = held.get(ticker, {})
+            name = d.get("name", ticker)
+            shares = d.get("shares", 0)
+            avg_cost = d.get("avg_cost", 0)
+
+            if market == "US" and ticker in pre_moves:
+                pm = pre_moves[ticker]
+                pct = pm["pre_pct"]
+                icon = "▲" if pct > 0 else "▼"
+                pnl_icon = "🟢" if pct > 0 else "🔴"
+                position_lines.append(
+                    f"{pnl_icon} <b>{ticker}</b> {icon}{abs(pct):.1f}% pre-mkt "
+                    f"(${pm['pre_price']:.2f})"
+                )
+            else:
+                # Fall back to last session close data
+                p = prices.get(ticker, {})
+                chg = p.get("change_pct")
+                price = p.get("price")
+                if price and chg is not None:
+                    icon = "▲" if chg > 0 else "▼"
+                    pnl_icon = "🟢" if chg > 0 else "🔴"
+                    pnl_vs_cost = ((price - avg_cost) / avg_cost * 100) if avg_cost else None
+                    pnl_str = f" · cost P&L {pnl_vs_cost:+.1f}%" if pnl_vs_cost is not None else ""
+                    position_lines.append(
+                        f"{pnl_icon} <b>{ticker}</b> {icon}{abs(chg):.1f}% (${price:.2f}){pnl_str}"
+                    )
+
+        # Sort: biggest movers first
+        if market == "US":
+            position_lines_sorted = sorted(
+                position_lines,
+                key=lambda x: abs(float(x.split("%")[0].split("▲")[-1].split("▼")[-1].strip() or 0)),
+                reverse=True
+            )
+        else:
+            position_lines_sorted = position_lines
+
+        if position_lines_sorted:
+            msg += "\n".join(position_lines_sorted[:12]) + "\n"
+        else:
+            msg += "<i>No price data available yet</i>\n"
+
+        # Section 2: earnings today
+        if earn_news:
+            msg += f"\n<b>📅 Earnings / Announcements Today</b>\n"
+            for item in earn_news[:3]:
+                title = item.get("title", "")[:100]
+                msg += f"• {title}\n"
+
+        # Section 3: economic calendar
+        if econ_news:
+            msg += f"\n<b>📋 Economic Calendar</b>\n"
+            for item in econ_news[:3]:
+                title = item.get("title", "")[:100]
+                msg += f"• {title}\n"
+
+        # Section 4: overnight / pre-market headlines
+        if overnight:
+            label = "🌙 Overnight" if market == "HK" else "🌅 Pre-Market Headlines"
+            msg += f"\n<b>{label}</b>\n"
+            for item in overnight[:3]:
+                title = item.get("title", "")[:100]
+                msg += f"• {title}\n"
+
+        send_telegram(msg)
+        print(f"[{datetime.now().strftime('%H:%M')}] {market} open alert sent.")
+
+    except Exception as e:
+        print(f"Market open alert error ({market}): {e}")
+
+
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
 def run_scheduler():
     """Run the scheduler."""
     print("📅 Scheduler running...")
     print("• Morning briefing: 07:00 HKT Mon–Fri (23:00 UTC Sun–Thu)")
-    print("• Weekly digest: 18:00 HKT Sunday (10:00 UTC Sunday)")
-    print("• Price alerts: every 30 mins during market hours\n")
+    print("• HK open alert:    09:20 HKT Mon–Fri (01:20 UTC)")
+    print("• US open alert:    09:20 ET  Mon–Fri (13:20 UTC)")
+    print("• HK close:         16:05 HKT (08:05 UTC)")
+    print("• EU close:         23:35 HKT (15:35 UTC)")
+    print("• US close:         04:05 HKT+1 (20:05 UTC)")
+    print("• Weekly digest:    18:00 HKT Sunday (10:00 UTC)")
+    print("• Price alerts:     every 30 mins during market hours\n")
 
     # Morning briefing — 7am HKT = 23:00 UTC previous day
     schedule.every().sunday.at("23:00").do(send_morning_briefing)
@@ -1223,6 +1431,20 @@ def run_scheduler():
     schedule.every().day.at("08:05").do(lambda: send_market_close_alert("HK"))   # HK close 16:00 HKT
     schedule.every().day.at("15:35").do(lambda: send_market_close_alert("EU"))   # EU close 23:35 HKT
     schedule.every().day.at("20:05").do(lambda: send_market_close_alert("US"))   # US close 04:05 HKT+1
+
+    # Market open alerts (UTC times, Mon–Fri)
+    # HK open: 9:20am HKT = 01:20 UTC
+    schedule.every().monday.at("01:20").do(lambda: send_market_open_alert("HK"))
+    schedule.every().tuesday.at("01:20").do(lambda: send_market_open_alert("HK"))
+    schedule.every().wednesday.at("01:20").do(lambda: send_market_open_alert("HK"))
+    schedule.every().thursday.at("01:20").do(lambda: send_market_open_alert("HK"))
+    schedule.every().friday.at("01:20").do(lambda: send_market_open_alert("HK"))
+    # US open: 9:20am ET = 13:20 UTC (EDT) — ~5 min early Nov–Mar, acceptable
+    schedule.every().monday.at("13:20").do(lambda: send_market_open_alert("US"))
+    schedule.every().tuesday.at("13:20").do(lambda: send_market_open_alert("US"))
+    schedule.every().wednesday.at("13:20").do(lambda: send_market_open_alert("US"))
+    schedule.every().thursday.at("13:20").do(lambda: send_market_open_alert("US"))
+    schedule.every().friday.at("13:20").do(lambda: send_market_open_alert("US"))
 
     while True:
         schedule.run_pending()

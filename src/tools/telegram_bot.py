@@ -830,6 +830,14 @@ def list_portfolios() -> str:
 
 
 @tool
+def get_market_open_brief(market: str = "US") -> str:
+    """On-demand market open brief: pre-market movers, today's earnings, economic calendar. market='US' or 'HK'. Use for 'what's happening before US open', 'HK open brief', 'pre-market movers'."""
+    from src.tools.scheduler import send_market_open_alert
+    send_market_open_alert(market.upper())
+    return f"✅ {market.upper()} market open brief sent to Telegram."
+
+
+@tool
 def get_macro_regime() -> str:
     """Macro regime detector: yield curve + credit spreads + Fed Funds → RISK-ON/RISK-OFF/EASING/STAGFLATION/LATE CYCLE label. Use for 'macro regime', 'risk-on or off', 'what is the macro environment'."""
     from src.tools.ficc import get_macro_regime as _gmr
@@ -1104,6 +1112,7 @@ tools = [
     get_macro_regime,
     switch_account,
     list_portfolios,
+    get_market_open_brief,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
