@@ -92,8 +92,22 @@ def extract_ticker(text: str, chat_id: str = None) -> str | None:
 
 # ── System Prompt ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = f"""You are an AI investment research assistant covering equities, FICC, commodities and crypto as a multi-asset portfolio manager. Current primary theme: AI infrastructure.
-You have access to tools for live prices, news, SEC filings, earnings calendars, deep dive research reports, and portfolio data.
+SYSTEM_PROMPT = f"""You are an AI investment research assistant covering equities, FICC, commodities and crypto as a multi-asset portfolio manager.
+
+This portfolio runs MULTIPLE independent investment theses simultaneously — not just AI infrastructure:
+• <b>AI Infrastructure</b> — NVDA, AMD, ALAB, CRDO, TSM, ASML, ARM, AVGO (compute buildout supercycle)
+• <b>Memory Cycle</b> — MU, WDC, SNDK (DRAM/NAND oversupply ending, pricing recovery)
+• <b>Energy & Power</b> — GEV, BE, CEG, VST, TLN (AI data centre power shortage, nuclear renaissance)
+• <b>Banks & Rates</b> — JPM, GS, MS (rate normalisation + M&A revival)
+• <b>Space</b> — RKLB, ASTS (direct-to-cell satellite, launch cost deflation)
+• <b>Networking & Optical</b> — GLW, LITE, CSCO (800G optical cycle, fibre shortage)
+• <b>Software & Data</b> — PLTR, APP, MSFT, META, GOOGL
+
+CRITICAL: When discussing any position, always frame it within its PRIMARY thesis — not everything is an AI story.
+MU moves because of DRAM pricing, not because of NVDA. GEV moves because of grid capex, not AI directly.
+GS moves because of M&A deal flow and the yield curve. Treat each thesis independently.
+
+You have access to tools for live prices, news, SEC filings, earnings calendars, deep dive research, portfolio data, and theme analysis.
 Always use tools to fetch real data — never make up prices or news.
 
 WHEN DISCUSSING ANY COMPANY — always cover these two angles unprompted:
@@ -611,6 +625,51 @@ def get_ficc_data() -> str:
     return get_ficc_message()
 
 
+@tool
+def get_theme_analysis(theme: str) -> str:
+    """
+    Deep analysis of a specific investment thesis / theme in the portfolio.
+    Covers: thesis health (on track / watch / concern), latest news specific to
+    that theme's signals, and one thing to watch in the next 2 weeks.
+
+    Available themes: AI Infrastructure, Memory Cycle, Energy & Power, Banks & Rates,
+    Space, Networking & Optical, Software & Data, Quantum, Defence, Crypto.
+
+    Use when the user asks about a theme, sector, or macro trade — e.g. 'how is the
+    memory cycle trade doing', 'update on energy positions', 'are banks still a buy',
+    'space thesis check', 'how is the non-AI part of the book doing'.
+    Also use when the user asks about 大盘 or the broader market picture.
+    """
+    from src.tools.themes import get_theme_analysis as _gta, get_tickers_by_theme
+    from src.tools.prices import get_live_prices
+
+    theme = theme.strip().title()
+    # Fuzzy match common shorthand
+    _aliases = {
+        "Memory": "Memory Cycle", "Mem": "Memory Cycle", "Dram": "Memory Cycle",
+        "Energy": "Energy & Power", "Power": "Energy & Power",
+        "Banks": "Banks & Rates", "Bank": "Banks & Rates", "Rates": "Banks & Rates",
+        "Ai": "AI Infrastructure", "Ai Infrastructure": "AI Infrastructure",
+        "Networking": "Networking & Optical", "Optical": "Networking & Optical",
+        "Software": "Software & Data", "Data": "Software & Data",
+        "Space": "Space", "Satellite": "Space",
+        "Crypto": "Crypto", "Bitcoin": "Crypto",
+        "Defence": "Defence", "Defense": "Defence",
+        "Quantum": "Quantum",
+    }
+    theme = _aliases.get(theme, theme)
+
+    by_theme = get_tickers_by_theme(WATCHLIST)
+    held_in_theme = by_theme.get(theme, [])
+    if not held_in_theme:
+        # Show available themes
+        available = ", ".join(sorted(by_theme.keys()))
+        return f"No held positions found for theme '{theme}'.\nActive themes in your book: {available}"
+
+    prices = get_live_prices(held_in_theme)
+    return _gta(theme, held_in_theme, prices)
+
+
 tools = [
     deep_dive,
     get_price,
@@ -626,16 +685,19 @@ tools = [
     get_valuation,
     check_risk,
     get_catalyst_calendar,
+    get_theme_analysis,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
     import os as _os2
     _db_path = _os2.path.join(_DB_DIR, "agent_memory.db")
+    _volume_mounted = _os2.path.exists("/app/data")
     memory = _CheckpointSaver.from_conn_string(_db_path)
-    print(f"💾 Memory: SQLite ({_db_path})")
+    _persistence = "✅ PERSISTENT (Railway Volume)" if _volume_mounted else "⚠️ EPHEMERAL (mount /app/data volume in Railway to persist)"
+    print(f"💾 Memory: SQLite ({_db_path}) — {_persistence}")
 else:
     memory = _CheckpointSaver()
-    print("💾 Memory: in-process (SQLite not available)")
+    print("💾 Memory: in-process (install langgraph-checkpoint-sqlite to upgrade)")
 agent = create_react_agent(llm, tools, checkpointer=memory)
 
 

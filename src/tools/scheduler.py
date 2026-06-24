@@ -129,15 +129,36 @@ def send_morning_briefing():
             except Exception:
                 return []
 
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        # All held tickers for theme sweep
+        held_tickers = [t for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
+
+        with ThreadPoolExecutor(max_workers=5) as ex:
             f_prices = ex.submit(get_live_prices, BRIEFING_TICKERS)
+            f_held_prices = ex.submit(get_live_prices, held_tickers)
             f_macro = ex.submit(get_macro_news)
             f_dates = ex.submit(get_earnings_dates, BRIEFING_TICKERS)
             f_events = ex.submit(_fetch_last_night_events)
             prices = f_prices.result()
+            held_prices = f_held_prices.result()
             macro = f_macro.result()
             dates = f_dates.result()
             last_night = f_events.result()
+
+        # Build theme performance summary (non-AI themes highlighted)
+        from src.tools.themes import get_tickers_by_theme, THEME_THESIS
+        by_theme = get_tickers_by_theme(WATCHLIST_DATA)
+        theme_lines = []
+        for theme, tickers in sorted(by_theme.items()):
+            moves = []
+            for t in tickers:
+                d = held_prices.get(t, {})
+                if d and d.get("change_pct") is not None:
+                    moves.append(d["change_pct"])
+            if not moves:
+                continue
+            avg = sum(moves) / len(moves)
+            icon = "▲" if avg > 0 else "▼"
+            theme_lines.append(f"{icon} {theme}: avg {avg:+.1f}% ({len(moves)} positions)")
 
         upcoming = [
             (t, d) for t, d in dates.items()
@@ -186,11 +207,14 @@ UPCOMING EARNINGS (next 14 days):
 EVENTS FROM LAST NIGHT (earnings calls, conferences, after-hours):
 {events_text if events_text else "None found."}
 
+THEME PERFORMANCE ACROSS ALL THESES:
+{chr(10).join(theme_lines) if theme_lines else "No theme data."}
+
 Write a morning briefing covering:
 1. LAST NIGHT'S EVENTS — if anything happened after hours yesterday (earnings, conferences, guidance), cover it FIRST: what happened, market reaction, what it means for the position. Skip this section if nothing found.
-2. Overall market tone for AI infrastructure names (1-2 sentences)
-3. Top movers — highlight the 2-3 biggest moves and briefly explain why
-4. Key news — what matters from the headlines above and why it affects holdings
+2. THEME SWEEP — one line per active theme: is the thesis on track, and what's driving it today? Cover ALL themes not just AI (Memory Cycle, Energy & Power, Banks & Rates, Space etc.)
+3. Top movers — highlight the 2-3 biggest moves and briefly explain why (name the specific thesis driver, not just "market moved")
+4. Key news — what matters from the headlines above and why it affects which thesis
 5. Earnings watch — flag any upcoming earnings and what to watch for
 6. One thing to watch today
 
