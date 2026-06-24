@@ -774,6 +774,69 @@ def search_research(ticker: str = "", query: str = "") -> str:
 
 
 @tool
+def log_earnings_surprise(ticker: str, period: str, beat_miss: str,
+                          rev_surprise_pct: float = None, eps_surprise_pct: float = None,
+                          stock_reaction: float = None, notes: str = "") -> str:
+    """Log an earnings beat/miss to the tracker. beat_miss: 'Beat'|'Miss'|'In-line'. Use when user says 'log earnings NVDA Q1 2026 beat rev+3% eps+5% stock-2%'."""
+    from src.tools.research_library import log_earnings_surprise as _log
+    return _log(ticker, period, beat_miss, rev_surprise_pct, eps_surprise_pct, stock_reaction, notes)
+
+
+@tool
+def get_earnings_history(ticker: str) -> str:
+    """Show earnings beat/miss track record for a ticker. Use for 'earnings history NVDA', 'how many times has MU beaten'."""
+    from src.tools.research_library import format_earnings_history
+    return format_earnings_history(ticker)
+
+
+@tool
+def switch_account(account: str) -> str:
+    """Switch active portfolio account filter. Use 'switch account IBKR', 'show IBKR portfolio', 'switch to Moomoo'. Pass 'all' to view all accounts."""
+    from src.tools.notion_holdings import set_active_account, list_accounts, reload_holdings
+    if account.lower() == "all":
+        set_active_account("")
+        return "✅ Now viewing <b>all accounts</b>."
+    accounts = list_accounts()
+    match = next((a for a in accounts if a.lower() == account.lower()), None)
+    if not match and accounts:
+        match = next((a for a in accounts if account.lower() in a.lower()), None)
+    if match:
+        set_active_account(match)
+        return f"✅ Switched to account: <b>{match}</b>"
+    accounts_str = ", ".join(accounts) if accounts else "none found (check Notion 'Account' field)"
+    return f"❌ Account '{account}' not found. Available: {accounts_str}"
+
+
+@tool
+def list_portfolios() -> str:
+    """List all portfolio accounts and position counts. Use for 'list accounts', 'show portfolios', 'which accounts do I have'."""
+    from src.tools.notion_holdings import list_accounts, get_holdings_cached, get_active_account
+    accounts = list_accounts()
+    if not accounts:
+        return "⚠️ No 'Account' field found in Notion Holdings. Add an 'Account' property (Select or Text) to each holding."
+    active = get_active_account()
+    all_holdings = get_holdings_cached(account_filter="")
+    msg = f"🗂 <b>Portfolio Accounts</b>\n"
+    msg += f"<i>Active filter: {active if active else 'All accounts'}</i>\n\n"
+    for acc in accounts:
+        items = {t: d for t, d in all_holdings.items() if d.get("account", "").lower() == acc.lower()}
+        held = sum(1 for d in items.values() if d.get("shares", 0) > 0)
+        watch = len(items) - held
+        marker = " ◀ active" if acc.lower() == active.lower() else ""
+        msg += f"• <b>{acc}</b> — {held} held, {watch} watchlist{marker}\n"
+    msg += f"\n• <b>All</b> — {sum(1 for d in all_holdings.values() if d.get('shares',0)>0)} held, {sum(1 for d in all_holdings.values() if not d.get('shares',0))} watchlist"
+    msg += "\n\n<i>Switch with: <code>switch account ACCOUNT_NAME</code></i>"
+    return msg
+
+
+@tool
+def get_macro_regime() -> str:
+    """Macro regime detector: yield curve + credit spreads + Fed Funds → RISK-ON/RISK-OFF/EASING/STAGFLATION/LATE CYCLE label. Use for 'macro regime', 'risk-on or off', 'what is the macro environment'."""
+    from src.tools.ficc import get_macro_regime as _gmr
+    return _gmr()
+
+
+@tool
 def get_sector_rotation() -> str:
     """
     Sector rotation monitor: 5-day ETF performance across all major sectors, ranked best to worst.
@@ -1036,6 +1099,11 @@ tools = [
     manage_alerts,
     get_pnl_summary,
     get_sector_rotation,
+    log_earnings_surprise,
+    get_earnings_history,
+    get_macro_regime,
+    switch_account,
+    list_portfolios,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
@@ -1205,10 +1273,15 @@ def handle_message(text: str, chat_id: str):
         _sell_match   = re.match(r'^(?:sold|sell|close[sd]?)\s+(?:all\s+)?(?:\d+\s+)?([A-Za-z0-9.\-]+)(?:\s+(?:at|@)\s+\$?(\d+(?:\.\d+)?))?(?:\s*[—\-]{1,2}\s*(.+))?$', _cleaned)
         _rate_match        = re.match(r'^rate\s+([A-Za-z0-9.\-]+)\s+(.+)$', _cleaned)
         _thesis_match      = re.match(r'^(?:set\s+)?thesis\s+([A-Za-z0-9.\-]+)\s+(.+)$', _cleaned)
+        # log earnings NVDA Q1 2026 beat rev+3.2% eps+5% stock-2.1%
+        _earn_log_match    = re.match(r'^log\s+earnings\s+([A-Za-z0-9.\-]+)\s+(Q[1-4]\s+\d{4}|\d{4}\s+Q[1-4]|FY\d{4})\s+(beat|miss|in-?line)(.*)?$', _cleaned, re.IGNORECASE)
+        _earn_hist_match   = re.match(r'^(?:earnings\s+history|show\s+earnings)\s+([A-Za-z0-9.\-]+)$', _cleaned)
         _alert_set_match   = re.match(r'^alert\s+([A-Za-z0-9.\-]+)\s+(?:(up|down)\s+)?(\d+(?:\.\d+)?)%?$', _cleaned)
         _alert_rm_match    = re.match(r'^(?:remove|delete|cancel)\s+alert\s+([A-Za-z0-9.\-]+)$', _cleaned)
         _alert_list_match  = _cleaned in ("show alerts", "my alerts", "list alerts", "alerts")
         _reload_match      = _cleaned in ("reload holdings", "refresh holdings", "reload", "refresh watchlist")
+        _switch_acct_match = re.match(r'^(?:switch\s+(?:account|portfolio|to)\s+|show\s+portfolio\s+)(.+)$', _cleaned, re.IGNORECASE)
+        _list_acct_match   = _cleaned in ("list accounts", "list portfolios", "show accounts", "my accounts", "portfolios")
 
         if _add_match:
             ticker = _add_match.group(1).upper()
@@ -1262,6 +1335,26 @@ def handle_message(text: str, chat_id: str):
             send_message(result, chat_id)
             return
 
+        if _earn_log_match:
+            import re as _re2
+            ticker  = _earn_log_match.group(1).upper()
+            period  = _earn_log_match.group(2).upper().replace("  ", " ")
+            bm_raw  = _earn_log_match.group(3).lower()
+            beat_miss = "Beat" if bm_raw == "beat" else ("Miss" if bm_raw == "miss" else "In-line")
+            rest    = (_earn_log_match.group(4) or "").strip()
+            rev  = float(m.group(1)) if (m := _re2.search(r'rev([+-]?\d+(?:\.\d+)?)%?', rest, re.IGNORECASE)) else None
+            eps  = float(m.group(1)) if (m := _re2.search(r'eps([+-]?\d+(?:\.\d+)?)%?', rest, re.IGNORECASE)) else None
+            stk  = float(m.group(1)) if (m := _re2.search(r'stock([+-]?\d+(?:\.\d+)?)%?', rest, re.IGNORECASE)) else None
+            from src.tools.research_library import log_earnings_surprise as _les
+            send_message(_les(ticker, period, beat_miss, rev, eps, stk, rest[:200]), chat_id)
+            return
+
+        if _earn_hist_match:
+            ticker = _earn_hist_match.group(1).upper()
+            from src.tools.research_library import format_earnings_history
+            send_message(format_earnings_history(ticker), chat_id)
+            return
+
         if _alert_set_match:
             ticker    = _alert_set_match.group(1).upper()
             direction = (_alert_set_match.group(2) or "both").lower()
@@ -1295,6 +1388,47 @@ def handle_message(text: str, chat_id: str):
                 f"<b>{len(PORTFOLIO)}</b> held positions · <b>{len(WATCHLIST_ONLY)}</b> watchlist",
                 chat_id
             )
+            return
+
+        if _switch_acct_match:
+            from src.tools.notion_holdings import set_active_account, list_accounts, get_holdings_cached
+            acct = _switch_acct_match.group(1).strip()
+            if acct.lower() == "all":
+                set_active_account("")
+                reply = "✅ Now viewing <b>all accounts</b>."
+            else:
+                accounts = list_accounts()
+                match_a = next((a for a in accounts if a.lower() == acct.lower()), None)
+                if not match_a:
+                    match_a = next((a for a in accounts if acct.lower() in a.lower()), None)
+                if match_a:
+                    set_active_account(match_a)
+                    filtered = get_holdings_cached()
+                    held = sum(1 for d in filtered.values() if d.get("shares", 0) > 0)
+                    reply = f"✅ Switched to <b>{match_a}</b> — {held} held positions."
+                else:
+                    avail = ", ".join(accounts) if accounts else "none (add 'Account' field in Notion)"
+                    reply = f"❌ Account '{acct}' not found.\nAvailable: {avail}"
+            send_message(reply, chat_id)
+            return
+
+        if _list_acct_match:
+            from src.tools.notion_holdings import list_accounts, get_holdings_cached, get_active_account
+            accounts = list_accounts()
+            if not accounts:
+                send_message("⚠️ No 'Account' field in Notion Holdings. Add a 'Account' Select property to use multi-portfolio.", chat_id)
+                return
+            active = get_active_account()
+            all_h = get_holdings_cached(account_filter="")
+            msg = "🗂 <b>Portfolio Accounts</b>\n"
+            msg += f"<i>Active: {active if active else 'All accounts'}</i>\n\n"
+            for acc in accounts:
+                items = {t: d for t, d in all_h.items() if d.get("account", "").lower() == acc.lower()}
+                held = sum(1 for d in items.values() if d.get("shares", 0) > 0)
+                marker = " ◀" if acc.lower() == active.lower() else ""
+                msg += f"• <b>{acc}</b> — {held} held, {len(items)-held} watchlist{marker}\n"
+            msg += "\n<i>Switch: <code>switch account NAME</code> · Reset: <code>switch account all</code></i>"
+            send_message(msg, chat_id)
             return
 
         # ── End write-back commands ────────────────────────────────────────────

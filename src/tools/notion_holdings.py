@@ -100,6 +100,14 @@ def get_holdings_from_notion() -> dict:
                 rt = thesis_prop.get("rich_text", [])
                 thesis = rt[0]["plain_text"].strip() if rt else ""
 
+            account_prop = props.get("Account", {})
+            account = ""
+            if account_prop.get("type") == "select":
+                account = (account_prop.get("select") or {}).get("name", "")
+            elif account_prop.get("type") == "rich_text":
+                rt = account_prop.get("rich_text", [])
+                account = rt[0]["plain_text"].strip() if rt else ""
+
             holdings[ticker] = {
                 "name": name,
                 "sector": sector,
@@ -108,6 +116,7 @@ def get_holdings_from_notion() -> dict:
                 "shares": shares,
                 "avg_cost": avg_cost,
                 "thesis": thesis,
+                "account": account,
             }
 
         print(f"Loaded {len(holdings)} holdings from Notion.")
@@ -120,14 +129,36 @@ def get_holdings_from_notion() -> dict:
 
 # ── Module-level cache — loaded once, shared across all importers ─────────────
 _holdings_cache = None
+_active_account: str = ""  # "" = all accounts
 
 
-def get_holdings_cached() -> dict:
-    """Return cached holdings — calls Notion once per process, not on every import."""
+def set_active_account(account: str) -> None:
+    global _active_account
+    _active_account = account.strip()
+
+
+def get_active_account() -> str:
+    return _active_account
+
+
+def get_holdings_cached(account_filter: str = None) -> dict:
+    """Return cached holdings, optionally filtered by account name."""
     global _holdings_cache
     if _holdings_cache is None:
         _holdings_cache = get_holdings_from_notion()
-    return _holdings_cache
+    filt = account_filter if account_filter is not None else _active_account
+    if not filt:
+        return _holdings_cache
+    return {t: d for t, d in _holdings_cache.items() if d.get("account", "").lower() == filt.lower()}
+
+
+def list_accounts() -> list[str]:
+    """Return sorted list of unique account names in holdings."""
+    global _holdings_cache
+    if _holdings_cache is None:
+        _holdings_cache = get_holdings_from_notion()
+    accounts = sorted({d.get("account", "") for d in _holdings_cache.values() if d.get("account")})
+    return accounts
 
 
 def get_watchlist_tickers() -> list:
