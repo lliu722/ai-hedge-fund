@@ -108,6 +108,7 @@ If any of the 3 steps is skipped, the deployment is not complete.
 - Weekly theme health score — 0–10 per theme (momentum + breadth) in Sunday digest + get_theme_health @tool
 
 - Code refactor: shared llm.py (call_deepseek + tavily_search), zero inline API calls, -238 net lines, dead stubs deleted
+- Market open alert fix — real pre-market data only (pre != prev check); earnings from earnings_calendar.py not Tavily; news with date-anchored query + junk domain filtering; no misleading session % when pre-mkt unavailable
 
 ## Next to build
 (awaiting next direction)
