@@ -96,6 +96,63 @@ def fmt(ticker: str) -> str:
     return f"{t} ({name})" if name else t
 
 
+# ── Geopolitical Pulse ───────────────────────────────────────────────────────
+
+def fetch_geopolitical_pulse() -> str:
+    """
+    Fetch geopolitical news and compress to 4 geography lines (1 sentence each).
+    Public — used by both the morning briefing and the on-demand bot tool.
+    """
+    import requests as _req
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+    try:
+        r = _req.post(
+            "https://api.tavily.com/search",
+            headers={"Authorization": f"Bearer {TAVILY_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "query": "geopolitical risk US China Taiwan Europe Middle East trade tariffs war today",
+                "max_results": 8,
+                "search_depth": "basic",
+            },
+            timeout=10,
+        )
+        articles = r.json().get("results", []) if r.status_code == 200 else []
+        if not articles:
+            return ""
+
+        news_text = "\n".join(
+            f"- {a.get('title', '')} — {a.get('content', '')[:150]}"
+            for a in articles[:7]
+        )
+
+        prompt = (
+            "From this news, write exactly 4 lines — one per geography.\n"
+            "Format each line as: [Geography]: [1 sentence on the key risk/development and its market implication]\n"
+            "Geographies to cover: US Policy, China/Taiwan, Europe, Middle East\n"
+            "If nothing relevant for a geography, write: [Geography]: No significant development.\n"
+            "Be specific. Max 25 words per line. No bullet points, no preamble.\n\n"
+            f"NEWS:\n{news_text}"
+        )
+
+        r2 = _req.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 180,
+                "temperature": 0.2,
+            },
+            timeout=15,
+        )
+        if r2.status_code == 200:
+            return r2.json()["choices"][0]["message"]["content"].strip()
+    except Exception as e:
+        print(f"Geopolitical pulse error: {e}")
+    return ""
+
+
 # ── Morning Briefing ──────────────────────────────────────────────────────────
 
 def send_morning_briefing():
@@ -109,6 +166,10 @@ def send_morning_briefing():
         import requests
 
         DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+
+        def _fetch_geopolitical_pulse():
+            """1-sentence per geography geopolitical snapshot for the morning briefing."""
+            return fetch_geopolitical_pulse()
 
         def _fetch_last_night_events():
             """Tavily search for earnings/conference results from last night."""
@@ -132,17 +193,19 @@ def send_morning_briefing():
         # All held tickers for theme sweep
         held_tickers = [t for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
 
-        with ThreadPoolExecutor(max_workers=5) as ex:
+        with ThreadPoolExecutor(max_workers=6) as ex:
             f_prices = ex.submit(get_live_prices, BRIEFING_TICKERS)
             f_held_prices = ex.submit(get_live_prices, held_tickers)
             f_macro = ex.submit(get_macro_news)
             f_dates = ex.submit(get_earnings_dates, BRIEFING_TICKERS)
             f_events = ex.submit(_fetch_last_night_events)
+            f_geo = ex.submit(_fetch_geopolitical_pulse)
             prices = f_prices.result()
             held_prices = f_held_prices.result()
             macro = f_macro.result()
             dates = f_dates.result()
             last_night = f_events.result()
+            geo_pulse = f_geo.result()
 
         # Read-through: check if any trigger tickers moved big overnight
         from src.tools.read_through import get_morning_read_through
@@ -214,14 +277,17 @@ EVENTS FROM LAST NIGHT (earnings calls, conferences, after-hours):
 INDUSTRY READ-THROUGH ALERTS (trigger tickers that moved 5%+ overnight):
 {read_through_text if read_through_text else "None."}
 
+GEOPOLITICAL PULSE (1 line per geography):
+{geo_pulse if geo_pulse else "None."}
+
 THEME PERFORMANCE ACROSS ALL THESES:
 {chr(10).join(theme_lines) if theme_lines else "No theme data."}
 
 Write a morning briefing covering:
-1. LAST NIGHT'S EVENTS — if anything happened after hours yesterday (earnings, conferences, guidance), cover it FIRST: what happened, market reaction, what it means for the position. If industry read-through alerts are present, name the specific downstream holdings affected. Skip this section if nothing found.
-2. THEME SWEEP — one line per active theme: is the thesis on track, and what's driving it today? Cover ALL themes not just AI (Memory Cycle, Energy & Power, Banks & Rates, Space etc.)
-3. Top movers — highlight the 2-3 biggest moves and briefly explain why (name the specific thesis driver, not just "market moved")
-4. Key news — what matters from the headlines above and why it affects which thesis
+1. LAST NIGHT'S EVENTS — if anything happened after hours yesterday (earnings, conferences, guidance), cover it FIRST: what happened, market reaction, what it means for the position. If industry read-through alerts are present, name the specific downstream holdings affected. Skip if nothing found.
+2. GEOPOLITICAL PULSE — use the 4-line geo snapshot above. Flag any geography with active risk that could move markets today. Skip if all lines are "No significant development."
+3. THEME SWEEP — one line per active theme: is the thesis on track, and what's driving it today? Cover ALL themes not just AI (Memory Cycle, Energy & Power, Banks & Rates, Space etc.)
+4. Top movers — highlight the 2-3 biggest moves and briefly explain why (name the specific thesis driver, not just "market moved")
 5. Earnings watch — flag any upcoming earnings and what to watch for
 6. One thing to watch today
 

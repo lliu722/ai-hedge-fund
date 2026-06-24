@@ -626,6 +626,23 @@ def get_ficc_data() -> str:
 
 
 @tool
+def get_geopolitical_pulse() -> str:
+    """
+    Live geopolitical snapshot — 1 sentence per geography on the key risk or
+    development today and its market implication.
+    Covers: US Policy, China/Taiwan, Europe, Middle East.
+    Use when the user asks: 'what's the geopolitical situation', 'any geo risk today',
+    'what's happening in China/Taiwan', 'Middle East update', 'macro risk pulse',
+    'geopolitical briefing'.
+    """
+    from src.tools.scheduler import fetch_geopolitical_pulse
+    pulse = fetch_geopolitical_pulse()
+    if not pulse:
+        return "🌍 No significant geopolitical developments found right now."
+    return f"🌍 <b>Geopolitical Pulse</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n{pulse}"
+
+
+@tool
 def get_read_through(ticker: str) -> str:
     """
     Industry read-through analysis: when a major company moves or reports earnings,
@@ -791,6 +808,7 @@ tools = [
     check_risk,
     get_catalyst_calendar,
     get_theme_analysis,
+    get_geopolitical_pulse,
     get_read_through,
     get_decision_journal,
 ]
@@ -933,6 +951,15 @@ def handle_message(text: str, chat_id: str):
             send_message("⏳ Scanning for breaking news...", chat_id, show_buttons=False)
             check_breaking_news()
             send_message("✅ News scan complete — anything market-moving was pushed above.", chat_id)
+            return
+
+        if lowered in ("geo pulse", "geopolitical", "geo risk", "geo update"):
+            from src.tools.scheduler import fetch_geopolitical_pulse
+            send_message("⏳ Fetching geopolitical pulse...", chat_id, show_buttons=False)
+            pulse = fetch_geopolitical_pulse()
+            msg = (f"🌍 <b>Geopolitical Pulse</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n{pulse}"
+                   if pulse else "🌍 No significant geopolitical developments found right now.")
+            send_message(msg, chat_id)
             return
 
         if lowered in ("weekly digest", "send digest", "weekly report"):
