@@ -282,14 +282,15 @@ def get_portfolio() -> str:
 
     for t, d, price, value, dollar_pnl, pnl_pct in rows:
         chg = d.get("change_pct") or 0
-        today_icon = "▲" if chg > 0 else "▼"
-        pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+        today_arrow = "▲" if chg > 0 else "▼"
+        pnl_sign = "+" if pnl_pct >= 0 else ""
+        today_sign = "+" if chg >= 0 else ""
         shares = PORTFOLIO.get(t, {}).get("shares", 0)
-        avg_cost = PORTFOLIO.get(t, {}).get("avg_cost", 0)
         msg += (
-            f"<b>{fmt(t)}</b>  ${price:.2f}  {today_icon}{abs(chg):.2f}% today\n"
-            f"  {shares:.0f}sh @ ${avg_cost:.2f} cost · val ${value:,.0f}\n"
-            f"  {pnl_emoji} P&amp;L {dollar_pnl:+,.0f} ({pnl_pct:+.1f}%)\n\n"
+            f"<b>{fmt(t)}</b>  "
+            f"<i>today {today_arrow}{today_sign}{chg:.1f}%</i>  "
+            f"{'🟢' if pnl_pct >= 0 else '🔴'} <b>{pnl_sign}{pnl_pct:.1f}%</b>\n"
+            f"  ${price:.2f} · {shares:.0f}sh · ${value:,.0f}\n"
         )
 
     if total_value > 0:
@@ -297,8 +298,9 @@ def get_portfolio() -> str:
         total_pnl_pct = (total_pnl / total_cost * 100) if total_cost else 0
         pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
         msg += (
-            f"\n{pnl_emoji} <b>Total: ${total_value:,.0f}</b> · P&L <b>${total_pnl:+,.0f} ({total_pnl_pct:+.1f}%)</b>\n"
-            f"<i>{winners} winners · {losers} losers</i>"
+            f"\n<b>Total ${total_value:,.0f}</b>  "
+            f"{pnl_emoji} <b>{total_pnl_pct:+.1f}% all-in</b> (${total_pnl:+,.0f})\n"
+            f"<i>{winners} up · {losers} down</i>"
         )
     return msg
 
