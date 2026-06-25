@@ -280,27 +280,29 @@ def get_portfolio() -> str:
     # Sort by position value descending
     rows.sort(key=lambda x: -x[3])
 
+    # Table header
+    msg += "<code>"
+    msg += f"{'':10}{'today':>7}  {'P&L':>7}\n"
+    msg += f"{'-'*27}\n"
+
     for t, d, price, value, dollar_pnl, pnl_pct in rows:
         chg = d.get("change_pct") or 0
-        today_arrow = "▲" if chg > 0 else "▼"
-        pnl_sign = "+" if pnl_pct >= 0 else ""
-        today_sign = "+" if chg >= 0 else ""
-        shares = PORTFOLIO.get(t, {}).get("shares", 0)
         weight = (value / total_value * 100) if total_value else 0
-        msg += (
-            f"<b>{fmt(t)}</b>  "
-            f"<i>today {today_arrow}{today_sign}{chg:.1f}%</i>  "
-            f"{'🟢' if pnl_pct >= 0 else '🔴'} <b>{pnl_sign}{pnl_pct:.1f}%</b>\n"
-            f"  ${price:.2f} · {shares:.0f}sh · {weight:.1f}%\n"
-        )
+        price_str = f"${price/1000:.1f}k" if price >= 1000 else f"${price:.0f}"
+        left = f"{t:<5}{weight:.1f}%"
+        today_str = f"{chg:+.1f}%"
+        pnl_str = f"{pnl_pct:+.1f}%"
+        msg += f"{left:<10}{today_str:>7}  {pnl_str:>7}\n"
+
+    msg += "</code>"
 
     if total_value > 0:
         total_pnl = total_value - total_cost
         total_pnl_pct = (total_pnl / total_cost * 100) if total_cost else 0
         pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
         msg += (
-            f"\n<b>Total ${total_value:,.0f}</b>  "
-            f"{pnl_emoji} <b>{total_pnl_pct:+.1f}% all-in</b> (${total_pnl:+,.0f})\n"
+            f"\n<b>${total_value:,.0f} total</b>  "
+            f"{pnl_emoji} <b>{total_pnl_pct:+.1f}% all-in</b>\n"
             f"<i>{winners} up · {losers} down</i>"
         )
     return msg
