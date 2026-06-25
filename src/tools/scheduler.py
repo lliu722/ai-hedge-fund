@@ -239,18 +239,15 @@ def send_morning_briefing():
                 if snip:
                     events_text += f"  {snip}\n"
 
-        prompt = f"""You are an AI investment research assistant. Write a concise morning briefing for an AI infrastructure equity investor.
+        prompt = f"""You are an AI investment research assistant. Write a morning briefing for a multi-theme equity investor.
 
-WATCHLIST PRICES TODAY:
+PORTFOLIO PRICES TODAY:
 {prices_text}
 
-MACRO & AI NEWS:
+MACRO & MARKET NEWS:
 {news_text}
 
-UPCOMING EARNINGS (next 14 days):
-{earnings_text}
-
-EVENTS FROM LAST NIGHT (earnings calls, conferences, after-hours):
+LAST NIGHT EVENTS (earnings calls, conferences, after-hours):
 {events_text if events_text else "None found."}
 
 INDUSTRY READ-THROUGH ALERTS (trigger tickers that moved 5%+ overnight):
@@ -259,23 +256,31 @@ INDUSTRY READ-THROUGH ALERTS (trigger tickers that moved 5%+ overnight):
 GEOPOLITICAL PULSE (1 line per geography):
 {geo_pulse if geo_pulse else "None."}
 
-THEME PERFORMANCE ACROSS ALL THESES:
+THEME PERFORMANCE:
 {chr(10).join(theme_lines) if theme_lines else "No theme data."}
 
-Write a morning briefing covering:
-1. LAST NIGHT'S EVENTS — if anything happened after hours yesterday (earnings, conferences, guidance), cover it FIRST: what happened, market reaction, what it means for the position. If industry read-through alerts are present, name the specific downstream holdings affected. Skip if nothing found.
-2. GEOPOLITICAL PULSE — use the 4-line geo snapshot above. Flag any geography with active risk that could move markets today. Skip if all lines are "No significant development."
-3. THEME SWEEP — one line per active theme: is the thesis on track, and what's driving it today? Cover ALL themes not just AI (Memory Cycle, Energy & Power, Banks & Rates, Space etc.)
-4. Top movers — highlight the 2-3 biggest moves and briefly explain why (name the specific thesis driver, not just "market moved")
-5. Earnings watch — flag any upcoming earnings and what to watch for
-6. One thing to watch today
+UPCOMING EARNINGS (next 14 days):
+{earnings_text}
+
+Write exactly 3 sections:
+
+<b>📰 Headlines</b>
+Filtered overnight headlines — only what genuinely matters. If last night had earnings or events, lead with those. If read-through alerts fired, name the downstream holdings affected. Skip noise.
+
+<b>🌍 What This Means</b>
+Two parts in one section:
+First — what does this mean FOR MY PORTFOLIO specifically? Name positions, not themes. If NVDA is up because of hyperscaler capex, say which of my holdings benefit and why.
+Second — what does it mean for global markets broadly? Cover whichever of equities / commodities / FICC / crypto is actually relevant today. Not a fixed template — only cover what moved.
+
+<b>🤖 AI Sector</b>
+Dedicated section for the AI theme given portfolio concentration. What is happening across AI Infrastructure, Memory, Networking, Software & Data today? Any developer signals, earnings commentary, or narrative shifts? What is the sector telling us?
 
 Rules:
-- Maximum 300 words
+- Maximum 350 words total
 - No markdown tables, no ### headers
-- Use • for bullet points
-- Be direct and specific — no generic statements
-- Format for Telegram using <b>bold</b> for emphasis"""
+- Use • for bullet points within sections
+- Be direct and specific — name tickers, not just themes
+- Format for Telegram using <b>bold</b> for tickers and key terms"""
 
         briefing = call_deepseek(prompt, max_tokens=600, temperature=0.3, timeout=60) or "Could not generate AI briefing."
 
@@ -871,37 +876,58 @@ def _categorise(tickers: list) -> dict:
 
 # ── Post-Market Advice ────────────────────────────────────────────────────────
 
-def _post_market_advice(summary_lines: list, held: dict) -> str:
-    """Generate targeted buy/trim/hold advice based on today's close moves."""
+def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> str:
+    """
+    AI Shadow Portfolio — three personas each give their post-close view.
+    Sent as a second message after the positions summary.
+    """
     try:
-        # Build P&L context for held positions
+        from src.tools.recommendations import CATHIE_WOOD, DRUCKENMILLER, DAMODARAN
+        from concurrent.futures import ThreadPoolExecutor
+        from src.tools.llm import call_deepseek as _ds
+
         pnl_lines = []
         for t, d in held.items():
-            shares = d.get("shares", 0)
             avg_cost = d.get("avg_cost", 0)
             name = d.get("name", t)
             if avg_cost:
-                pnl_lines.append(f"{t} ({name}): avg cost ${avg_cost:.2f}, {shares} shares")
+                pnl_lines.append(f"{t} ({name}): avg cost ${avg_cost:.2f}")
 
-        prompt = (
-            "You are a portfolio manager reviewing today's close. Give specific, actionable advice.\n\n"
-            "TODAY'S CATEGORY MOVES:\n"
-            + "\n".join(summary_lines) + "\n\n"
-            "PORTFOLIO POSITIONS (avg costs):\n"
-            + "\n".join(pnl_lines[:20]) + "\n\n"
-            "Based on today's moves and the portfolio's average costs, give three sections:\n\n"
-            "<b>🟢 Consider Adding</b> — names that dipped today and remain in thesis, good add point\n"
-            "<b>🔴 Consider Trimming</b> — names up significantly where taking some profit makes sense\n"
-            "<b>⚪ Hold / Watch</b> — key names to monitor tomorrow and why\n\n"
-            "Rules: max 200 words, 2-3 names per section max, be specific about WHY (reference today's move or P&L), "
-            "use <b>bold</b> for tickers. No generic advice."
+        context = (
+            f"TODAY'S {market} CLOSE — CATEGORY MOVES:\n"
+            + "\n".join(summary_lines)
+            + "\n\nPORTFOLIO POSITIONS:\n"
+            + "\n".join(pnl_lines[:20])
         )
 
-        result = call_deepseek(prompt, max_tokens=350, temperature=0.3, timeout=30)
-        if result and not result.startswith("❌"):
-            return result
+        persona_prompt = (
+            lambda persona_system:
+            context + "\n\n"
+            "Given today's close, what is your ONE specific action call on this portfolio? "
+            "Name the ticker. Say BUY / ADD / TRIM / HOLD. Give exactly 2 sentences of reasoning. "
+            "Be direct. No generic statements. Use <b>bold</b> for the ticker."
+        )
+
+        def _call_persona(system):
+            r = _ds(persona_prompt(system), system, max_tokens=120, temperature=0.4, timeout=25)
+            return r if r and not r.startswith("❌") else "No view."
+
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            fc = ex.submit(_call_persona, CATHIE_WOOD)
+            fd = ex.submit(_call_persona, DRUCKENMILLER)
+            fv = ex.submit(_call_persona, DAMODARAN)
+            cathie = fc.result()
+            druck  = fd.result()
+            damo   = fv.result()
+
+        return (
+            f"🧠 <b>AI Shadow Portfolio — {market} Close</b>\n\n"
+            f"<b>Cathie Wood</b>\n{cathie}\n\n"
+            f"<b>Druckenmiller</b>\n{druck}\n\n"
+            f"<b>Damodaran</b>\n{damo}"
+        )
     except Exception as e:
-        print(f"Post-market advice error: {e}")
+        print(f"Shadow portfolio error: {e}")
     return ""
 
 
@@ -995,13 +1021,12 @@ def send_market_close_alert(market: str):
             + synthesis
         )
 
-        # For US close: append buy/trim/hold advice based on today's moves
-        if market == "US":
-            advice = _post_market_advice(summary_lines, held)
-            if advice:
-                msg += f"\n\n{advice}"
-
         send_telegram(msg)
+
+        # Second message: AI Shadow Portfolio (all markets)
+        shadow = _shadow_portfolio_message(summary_lines, held, market)
+        if shadow:
+            send_telegram(shadow)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} close alert sent.")
 
     except Exception as e:
@@ -1383,6 +1408,71 @@ def send_market_open_alert(market: str):
         print(f"Market open alert error ({market}): {e}")
 
 
+# ── Monthly 复盘 ──────────────────────────────────────────────────────────────
+
+def _maybe_send_monthly_review():
+    """Run on the 1st of each month at 9am HKT — auto-push 复盘 to Telegram."""
+    if datetime.now().day != 1:
+        return
+    try:
+        from src.tools.notion_holdings import get_journal_entries
+        from src.tools.llm import call_deepseek
+        from src.tools.notify import send_telegram
+
+        entries = get_journal_entries()
+        closed = [e for e in entries if e.get("status", "").lower() == "closed" and e.get("realised_pnl") is not None]
+        open_  = [e for e in entries if e.get("status", "").lower() == "open"]
+
+        if not closed and not open_:
+            return
+
+        closed_lines = []
+        for e in sorted(closed, key=lambda x: x.get("opened", ""), reverse=True)[:20]:
+            t = e.get("ticker", "?")
+            pnl_pct = e.get("realised_pnl_pct", 0)
+            rationale = e.get("rationale", "")[:120]
+            opened = e.get("opened", "")
+            closed_date = e.get("closed", "")
+            icon = "🟢" if pnl_pct > 0 else "🔴"
+            closed_lines.append(f"{icon} {t}: {pnl_pct:+.1f}% | opened {opened} closed {closed_date} | {rationale}")
+
+        open_lines = [f"• {e.get('ticker', '?')}: {e.get('rationale', '')[:80]}" for e in open_[:10]]
+
+        context = ""
+        if closed_lines:
+            context += "CLOSED TRADES:\n" + "\n".join(closed_lines) + "\n\n"
+        if open_lines:
+            context += "OPEN POSITIONS:\n" + "\n".join(open_lines) + "\n\n"
+
+        prompt = (
+            "You are reviewing a portfolio's recent trade history as a post-mortem.\n\n"
+            + context
+            + "Write a structured 复盘 (review) covering:\n\n"
+            "<b>🏆 Best Decision</b> — which closed trade worked and what drove it. Was it thesis-driven or lucky timing?\n"
+            "<b>💀 Worst Decision</b> — which closed trade failed and why. Was the thesis wrong or was it execution?\n"
+            "<b>📊 Pattern</b> — one observation about what the closed trades reveal about decision-making tendencies\n"
+            "<b>📌 3 Things to Do Differently</b> — specific, actionable, named (not generic advice)\n\n"
+            "Max 250 words. Be honest and direct. Use <b>bold</b> for tickers. No flattery."
+        )
+
+        result = call_deepseek(prompt, max_tokens=450, temperature=0.4, timeout=40)
+        if not result or result.startswith("❌"):
+            return
+
+        wins = sum(1 for e in closed if (e.get("realised_pnl") or 0) > 0)
+        avg_pnl = (sum(e.get("realised_pnl_pct") or 0 for e in closed) / len(closed)) if closed else 0
+
+        msg = (
+            f"📅 <b>Monthly 复盘 — {datetime.now().strftime('%B %Y')}</b>\n"
+            f"<i>{len(closed)} closed · {wins} wins · avg {avg_pnl:+.1f}% · {len(open_)} still open</i>\n\n"
+            + result
+        )
+        send_telegram(msg)
+        print(f"Monthly 复盘 sent for {datetime.now().strftime('%B %Y')}")
+    except Exception as e:
+        print(f"Monthly review error: {e}")
+
+
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
 def run_scheduler():
@@ -1417,6 +1507,9 @@ def run_scheduler():
     schedule.every().day.at("08:05").do(lambda: send_market_close_alert("HK"))   # HK close 16:00 HKT
     schedule.every().day.at("15:35").do(lambda: send_market_close_alert("EU"))   # EU close 23:35 HKT
     schedule.every().day.at("20:05").do(lambda: send_market_close_alert("US"))   # US close 04:05 HKT+1
+
+    # Monthly 复盘 — 1st of each month, 9am HKT (01:00 UTC)
+    schedule.every().day.at("01:00").do(_maybe_send_monthly_review)
 
     # Market open alerts (UTC times, Mon–Fri)
     # HK open: 9:20am HKT = 01:20 UTC

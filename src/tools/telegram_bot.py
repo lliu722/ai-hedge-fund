@@ -1140,6 +1140,75 @@ def get_theme_analysis(theme: str) -> str:
     return _gta(theme, held_in_theme, prices)
 
 
+@tool
+def get_monthly_review() -> str:
+    """
+    Monthly 复盘 — look-back on closed trades, best/worst decisions, and 3 lessons.
+    Use when user says '复盘', 'monthly review', 'how did we do this month', 'what did we get wrong', 'look back'.
+    """
+    from src.tools.notion_holdings import get_journal_entries
+    from src.tools.llm import call_deepseek
+
+    entries = get_journal_entries()
+    if not entries:
+        return "📒 No journal entries found."
+
+    closed = [e for e in entries if e.get("status", "").lower() == "closed" and e.get("realised_pnl") is not None]
+    open_  = [e for e in entries if e.get("status", "").lower() == "open"]
+
+    if not closed and not open_:
+        return "📒 No trades in the journal yet."
+
+    # Build context for DeepSeek
+    closed_lines = []
+    for e in sorted(closed, key=lambda x: x.get("opened", ""), reverse=True)[:20]:
+        t = e.get("ticker", "?")
+        pnl = e.get("realised_pnl", 0)
+        pnl_pct = e.get("realised_pnl_pct", 0)
+        rationale = e.get("rationale", "")[:120]
+        opened = e.get("opened", "")
+        closed_date = e.get("closed", "")
+        icon = "🟢" if pnl > 0 else "🔴"
+        closed_lines.append(f"{icon} {t}: {pnl_pct:+.1f}% | opened {opened} closed {closed_date} | {rationale}")
+
+    open_lines = []
+    for e in open_[:10]:
+        t = e.get("ticker", "?")
+        rationale = e.get("rationale", "")[:80]
+        open_lines.append(f"• {t}: {rationale}")
+
+    context = ""
+    if closed_lines:
+        context += "CLOSED TRADES:\n" + "\n".join(closed_lines) + "\n\n"
+    if open_lines:
+        context += "OPEN POSITIONS (still holding):\n" + "\n".join(open_lines) + "\n\n"
+
+    prompt = (
+        "You are reviewing a portfolio's recent trade history as a post-mortem.\n\n"
+        + context
+        + "Write a structured 复盘 (review) covering:\n\n"
+        "<b>🏆 Best Decision</b> — which closed trade worked and what drove it. Was it thesis-driven or lucky timing?\n"
+        "<b>💀 Worst Decision</b> — which closed trade failed and why. Was the thesis wrong or was it execution?\n"
+        "<b>📊 Pattern</b> — one observation about what the closed trades reveal about decision-making tendencies\n"
+        "<b>📌 3 Things to Do Differently</b> — specific, actionable, named (not generic advice)\n\n"
+        "Max 250 words. Be honest and direct. Use <b>bold</b> for tickers. No flattery."
+    )
+
+    result = call_deepseek(prompt, max_tokens=450, temperature=0.4, timeout=40)
+    if not result or result.startswith("❌"):
+        return "❌ Could not generate review."
+
+    header = f"📅 <b>Monthly 复盘</b>\n<i>{datetime.now().strftime('%B %Y')}</i>\n"
+    stats = f"<i>{len(closed)} closed trades · {len(open_)} open positions</i>\n\n"
+
+    if closed:
+        wins = sum(1 for e in closed if (e.get("realised_pnl") or 0) > 0)
+        avg_pnl = sum(e.get("realised_pnl_pct") or 0 for e in closed) / len(closed)
+        stats = f"<i>{len(closed)} closed · {wins} wins · avg {avg_pnl:+.1f}% · {len(open_)} still open</i>\n\n"
+
+    return header + stats + result
+
+
 tools = [
     deep_dive,
     get_price,
@@ -1177,6 +1246,7 @@ tools = [
     get_market_open_brief,
     manage_watchlist_target,
     get_theme_health,
+    get_monthly_review,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
