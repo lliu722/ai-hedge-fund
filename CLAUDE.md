@@ -45,7 +45,7 @@ GitHub: github.com/lliu722/ai-hedge-fund
 git add src/tools/telegram_bot.py [other files] && git commit -m "..." && git push origin main
 
 ## Current state (as of 2026-06-25)
-- 38 tools registered in agent
+- 39 tools registered in agent
 - 41 held positions (shares > 0) — portfolio with dollar P&L
 - 57 watchlist names (shares = 0) — monitoring only
 - 98 total in Notion Holdings DB
@@ -115,8 +115,9 @@ If any of the 3 steps is skipped, the deployment is not complete.
 - Theme Radar — 55 ETF all-sector Z-score scanner (z>1.5, portfolio correlation <0.4); fires as 2nd message in Sunday digest + get_theme_radar @tool on-demand; works for biotech, consumer, energy, EM — not just tech
 - V3 roadmap tracking doc — docs/V3_roadmap.md in repo; updated after each build
 
+- Proactive Analyst (L4 Mode 2) — after each morning briefing, extracts new tickers from news, runs 4-section mini-dive on up to 2 new names; 7-day cooldown per ticker (SQLite); get_proactive_dive @tool on-demand
+
 ## Next to build
-- Layer 2 Mode 2: proactive analyst — system spots new names in news and runs mini-dive automatically
 - Layer 5 Part 2: shadow portfolio aggregation logic — tiebreaker when 3 personas disagree
 - Layer 6 Phase 2: macro scenario stress test ("what if AI falls 30%")
 - Known gap: exit framework — systematic "is thesis still intact?" check for held positions

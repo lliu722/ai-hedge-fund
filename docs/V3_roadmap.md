@@ -56,7 +56,7 @@ Everything the system reads, monitors, and ingests.
 |---|---|---|
 | Mode 1: Reactive Q&A (user asks, system answers) | ✅ Built | 9-section report, ~45s, auto-injects notes + earnings history |
 | Supply chain read-through (14 triggers) | ✅ Built | NVDA → TSM → ASML etc. On-demand + morning briefing integration |
-| Mode 2: Proactive analyst (system initiates) | ❌ Not built | System spots new name in news, runs mini-dive automatically. Trigger logic TBD. |
+| Mode 2: Proactive analyst (system initiates) | ✅ Built | After each morning briefing: extracts new tickers from news via DeepSeek, filters against 98 known names, runs 4-section mini-dive on each. Max 2/morning. 7-day cooldown per ticker (SQLite). get_proactive_dive @tool on-demand. |
 | Report structure update | ⏳ TBD | Pre-revenue names need different valuation framework (no P/E). |
 
 ---
@@ -116,13 +116,14 @@ Issues identified during V3 review that are not yet in any layer:
 
 ## Tool Count
 
-**38 tools** as of 2026-06-25
+**39 tools** as of 2026-06-25
 
 | Added | Tool | Layer |
 |---|---|---|
 | 2026-06-25 | get_theme_radar | L2 Section 4 |
 | 2026-06-25 | get_monthly_review | L7 |
 | 2026-06-25 | (shadow portfolio via close alert) | L5 Part 2 |
+| 2026-06-25 | get_proactive_dive | L4 Mode 2 |
 
 ---
 
