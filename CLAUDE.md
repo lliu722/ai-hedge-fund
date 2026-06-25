@@ -44,8 +44,8 @@ GitHub: github.com/lliu722/ai-hedge-fund
 ## Deploy
 git add src/tools/telegram_bot.py [other files] && git commit -m "..." && git push origin main
 
-## Current state (as of 2026-06-24)
-- 36 tools registered in agent
+## Current state (as of 2026-06-25)
+- 37 tools registered in agent
 - 41 held positions (shares > 0) — portfolio with dollar P&L
 - 57 watchlist names (shares = 0) — monitoring only
 - 98 total in Notion Holdings DB
@@ -111,6 +111,9 @@ If any of the 3 steps is skipped, the deployment is not complete.
 - Market open alert fix — real pre-market data only (pre != prev check); earnings from earnings_calendar.py not Tavily; news with date-anchored query + junk domain filtering; no misleading session % when pre-mkt unavailable
 - Morning briefing split — Portfolio (all held, sorted by move) + Watchlist movers (≥2% only, capped 15); fetches all 98 Notion names instead of hardcoded 20
 - Junk news filter — central clean_news() + fmt_snippet() in llm.py; blocks tradingeconomics, investing.com, barchart, tradingview, calendar/schedule pages, markdown noise; applied to every Tavily call across all modules
+- V3 roadmap — morning briefing restructured to 3 sections (Headlines / What This Means / AI Sector Update); close alert split into 2 messages (positions + AI Shadow Portfolio with Cathie/Druck/Damodaran each giving 1 action call); monthly 复盘 auto-pushed on 1st of month + get_monthly_review @tool on-demand
 
 ## Next to build
-(awaiting next direction)
+- Layer 2 Mode 2: proactive analyst — system spots new names in morning briefing news and runs mini-dive automatically
+- Layer 1 Section 4: new theme discovery signal definition + build
+- Layer 6 Phase 2: macro scenario stress test ("what if AI falls 30%")
