@@ -594,7 +594,10 @@ def get_earnings_transcript(ticker: str) -> str:
     prompt = (
         f"You are a senior equity analyst summarising {ticker}'s most recent earnings call.\n\n"
         f"TRANSCRIPT EXCERPTS:\n{transcript_text}\n\n"
-        f"Extract and format these 5 elements:\n\n"
+        f"Start with ONE headline sentence (no label, no bullet): what were the market expectations going in "
+        f"(consensus EPS and revenue estimates), did {ticker} beat or miss, and what was the stock's immediate reaction. "
+        f"This must be the very first line.\n\n"
+        f"Then extract these 5 elements:\n\n"
         f"<b>1. CEO TONE</b> — Bullish / Neutral / Cautious? What was the overall message?\n\n"
         f"<b>2. GUIDANCE</b> — What did management say about next quarter / full year revenue and EPS? "
         f"Was it above, in-line, or below expectations? Quote specific numbers if available.\n\n"
