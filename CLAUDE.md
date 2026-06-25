@@ -110,6 +110,7 @@ If any of the 3 steps is skipped, the deployment is not complete.
 - Code refactor: shared llm.py (call_deepseek + tavily_search), zero inline API calls, -238 net lines, dead stubs deleted
 - Market open alert fix — real pre-market data only (pre != prev check); earnings from earnings_calendar.py not Tavily; news with date-anchored query + junk domain filtering; no misleading session % when pre-mkt unavailable
 - Morning briefing split — Portfolio (all held, sorted by move) + Watchlist movers (≥2% only, capped 15); fetches all 98 Notion names instead of hardcoded 20
+- Junk news filter — central clean_news() + fmt_snippet() in llm.py; blocks tradingeconomics, investing.com, barchart, tradingview, calendar/schedule pages, markdown noise; applied to every Tavily call across all modules
 
 ## Next to build
 (awaiting next direction)
