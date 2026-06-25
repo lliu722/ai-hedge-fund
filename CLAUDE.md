@@ -17,7 +17,7 @@ Current theme: AI infrastructure. System is theme-agnostic.
 GitHub: github.com/lliu722/ai-hedge-fund
 
 ## Current state (as of 2026-06-25)
-- **39 tools** registered in agent
+- **44 tools** registered in agent
 - 41 held positions (shares > 0) — portfolio with dollar P&L
 - 57 watchlist names (shares = 0) — monitoring only
 - 98 total in Notion Holdings DB
