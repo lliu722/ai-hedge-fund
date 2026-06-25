@@ -323,6 +323,17 @@ Rules:
         send_telegram(header + price_block + "\n" + briefing)
         print(f"[{datetime.now().strftime('%H:%M')}] Morning briefing sent.")
 
+        # Proactive analyst — spot new names in morning news, run mini-dives unprompted
+        try:
+            from src.tools.proactive_analyst import run_proactive_analysis
+            all_news = (macro or []) + (last_night or [])
+            known = set(WATCHLIST_DATA.keys())
+            proactive_notes = run_proactive_analysis(all_news, known, max_dives=2)
+            for note in proactive_notes:
+                send_telegram(note)
+        except Exception as e:
+            print(f"Proactive analyst error: {e}")
+
         _alerted_today.clear()
         _drop_watch.clear()
         from src.tools.alert_config import clear_alerted_today

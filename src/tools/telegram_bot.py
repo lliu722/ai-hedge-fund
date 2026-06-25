@@ -1141,6 +1141,19 @@ def get_theme_analysis(theme: str) -> str:
 
 
 @tool
+def get_proactive_dive(ticker: str) -> str:
+    """
+    Run a quick 4-section analyst note on any company name spotted in news that isn't already in the portfolio or watchlist.
+    Use when user asks 'tell me about [ticker]', 'quick look at [ticker]', or 'what is [ticker]' for an unfamiliar name.
+    Also used automatically each morning for new names found in overnight news.
+    """
+    from src.tools.proactive_analyst import run_mini_dive
+    t = ticker.strip().upper()
+    result = run_mini_dive(t)
+    return result or f"❌ Could not generate analyst note for {t}."
+
+
+@tool
 def get_theme_radar() -> str:
     """
     Scan ~55 sector + thematic ETFs for emerging themes moving outside the current portfolio.
@@ -1264,6 +1277,7 @@ tools = [
     get_theme_health,
     get_monthly_review,
     get_theme_radar,
+    get_proactive_dive,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
