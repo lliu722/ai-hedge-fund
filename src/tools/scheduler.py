@@ -685,8 +685,9 @@ def _thesis_verdict(ticker: str, change: float, thesis: str, price: float) -> st
         prompt = (
             f"{ticker} is down {abs(change):.1f}% today (now ${price:.2f}).\n"
             f"{context}\n\n"
-            f"Is this drop a buy-the-dip opportunity (thesis intact) or a signal the thesis may be impaired?\n"
-            f"Reply in ONE short sentence starting with either '🟢 Thesis intact:' or '🔴 Thesis concern:'"
+            f"Is this a buy-the-dip or a thesis impairment?\n"
+            f"Reply in ONE punchy sentence (max 15 words) starting with '🟢 Thesis intact:' or '🔴 Thesis concern:'. "
+            f"State the specific reason — no filler like 'the drop', 'this decline', 'the move'."
         )
         result = call_deepseek(prompt, max_tokens=80, temperature=0.2, timeout=15)
         if result and not result.startswith("❌"):
