@@ -1300,25 +1300,61 @@ def send_market_open_alert(market: str):
                 return []
 
         def fetch_market_news():
-            """Actual news for our held names + macro — specific query with today's date."""
-            today_str = datetime.now().strftime("%B %d %Y")
-            top_names = " ".join(
-                d.get("name", t) for t, d in list(held.items())[:6]
-            )
+            """News for held names — company-specific queries, today only."""
+            today_str   = datetime.now().strftime("%B %d %Y")
+            # Use tickers not company names — more targeted results
+            top_tickers = " ".join(list(held.keys())[:8])
             if market == "HK":
-                query = f"{top_names} stock news overnight Asia {today_str}"
+                query = f"{top_tickers} earnings results Asia markets {today_str}"
             else:
-                query = f"stock market pre-market {today_str} {top_names}"
-            results = tavily_search(query, max_results=8, search_depth="basic")
-            junk_domains = ("calendar", "schedule", "investing.com", "tradingview",
-                            "barchart", "yahoo finance", "r/stock", "tradingeconomics",
-                            "stock market index", "quote - chart", "latest news and updates")
-            filtered = [
-                r for r in results
-                if not any(k in (r.get("title", "") + r.get("url", "")).lower() for k in junk_domains)
-                and len(r.get("content", "")) > 80
-            ]
-            return filtered[:4]
+                query = f"{top_tickers} stock news earnings analyst {today_str}"
+
+            results = tavily_search(query, max_results=10, search_depth="basic")
+
+            # Domains that are paywalled, stale aggregators, or generic calendars
+            _bad_domains = (
+                "ubs.com", "morganstanley.com", "goldmansachs.com", "jpmorgan.com",
+                "blackrock.com", "fidelity.com", "schwab.com", "vanguard.com",
+                "philadelphiafed.org", "federalreserve.gov", "bea.gov",
+                "investing.com", "tradingview.com", "barchart.com",
+                "tradingeconomics.com", "macrotrends.net", "wisesheets.io",
+                "stockanalysis.com/news", "seekingalpha.com",
+            )
+            _bad_titles = (
+                "what to look out for", "economic data this week", "survey of professional",
+                "market briefing", "equity market commentary", "house view",
+                "pre-market briefing", "alpha signal monitor", "daily market briefing",
+                "weekly outlook", "morning note", "daily note",
+                "stock market news for", "indexes start month", "markets news, june 1",
+            )
+
+            # Only keep today's or yesterday's articles — block old dates surfacing
+            from datetime import timedelta
+            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            today_iso = datetime.now().strftime("%Y-%m-%d")
+
+            filtered = []
+            for r in results:
+                url   = r.get("url", "").lower()
+                title = r.get("title", "").lower()
+                pub   = (r.get("published_date") or "")[:10]  # YYYY-MM-DD
+                content = r.get("content", "")
+
+                if any(d in url for d in _bad_domains):
+                    continue
+                if any(t in title for t in _bad_titles):
+                    continue
+                if len(content) < 80:
+                    continue
+                # If article has a date and it's older than yesterday, skip
+                if pub and pub < yesterday:
+                    continue
+
+                filtered.append(r)
+                if len(filtered) == 4:
+                    break
+
+            return filtered
 
         def fetch_economic_events():
             """Specific economic events due today — date-anchored query."""
@@ -1418,14 +1454,13 @@ def send_market_open_alert(market: str):
                 if snip:
                     msg += f"  <i>{snip}</i>\n"
 
-        # Section 4: actual market news (filtered)
+        # Section 4: actual market news — only show if something useful passed the filter
         if market_news:
-            label = "🌙 Overnight News" if market == "HK" else "🌅 Pre-Market News"
+            label = "🌙 Overnight News" if market == "HK" else "📰 Market News"
             msg += f"\n<b>{label}</b>\n"
             for item in market_news:
                 title = item.get("title", "")[:80].strip()
                 content = item.get("content", "").strip()
-                # Only show snippet if it adds info (not markdown noise or short filler)
                 snippet = content[:130] if len(content) > 40 and not content.startswith("[") else ""
                 msg += f"• {title}\n"
                 if snippet:
