@@ -44,9 +44,37 @@ def _init_db():
             )
         """)
         con.execute("CREATE INDEX IF NOT EXISTS idx_wl_ticker ON watchlist_targets(ticker)")
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS alerted_today (
+                ticker  TEXT NOT NULL,
+                date    TEXT NOT NULL,
+                PRIMARY KEY (ticker, date)
+            )
+        """)
 
 
 _init_db()
+
+
+def has_alerted_today(ticker: str, today: str) -> bool:
+    with _conn() as con:
+        row = con.execute(
+            "SELECT 1 FROM alerted_today WHERE ticker=? AND date=?", (ticker, today)
+        ).fetchone()
+        return row is not None
+
+
+def mark_alerted_today(ticker: str, today: str):
+    with _conn() as con:
+        con.execute(
+            "INSERT OR IGNORE INTO alerted_today (ticker, date) VALUES (?, ?)", (ticker, today)
+        )
+
+
+def clear_alerted_today(today: str):
+    """Remove entries older than today — called at morning briefing."""
+    with _conn() as con:
+        con.execute("DELETE FROM alerted_today WHERE date != ?", (today,))
 
 
 def set_alert(ticker: str, threshold: float, direction: str = "both") -> str:

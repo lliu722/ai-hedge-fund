@@ -320,6 +320,8 @@ Rules:
 
         _alerted_today.clear()
         _drop_watch.clear()
+        from src.tools.alert_config import clear_alerted_today
+        clear_alerted_today(datetime.now().strftime("%Y-%m-%d"))
         print(f"[{datetime.now().strftime('%H:%M')}] Daily alert cache cleared.")
 
     except Exception as e:
@@ -685,9 +687,8 @@ def _thesis_verdict(ticker: str, change: float, thesis: str, price: float) -> st
         prompt = (
             f"{ticker} is down {abs(change):.1f}% today (now ${price:.2f}).\n"
             f"{context}\n\n"
-            f"Is this a buy-the-dip or a thesis impairment?\n"
-            f"Reply in ONE punchy sentence (max 15 words) starting with '🟢 Thesis intact:' or '🔴 Thesis concern:'. "
-            f"State the specific reason — no filler like 'the drop', 'this decline', 'the move'."
+            f"Is this drop a buy-the-dip opportunity (thesis intact) or a signal the thesis may be impaired?\n"
+            f"Reply in ONE short sentence starting with either '🟢 Thesis intact:' or '🔴 Thesis concern:'"
         )
         result = call_deepseek(prompt, max_tokens=80, temperature=0.2, timeout=15)
         if result and not result.startswith("❌"):
@@ -762,17 +763,18 @@ def check_price_alerts():
         # Check for stabilisation of previously-dropped tickers
         _check_recovery_alerts(prices, held_data)
 
+        from src.tools.alert_config import has_alerted_today, mark_alerted_today
         alert_items = []  # (ticker, change, price, thesis)
         for ticker, data in prices.items():
             if not data:
                 continue
             change = data.get("change_pct") or 0
             if abs(change) >= 8.0:
-                if _alerted_today.get(ticker) == today:
+                if has_alerted_today(ticker, today):
                     continue
                 thesis = held_data.get(ticker, {}).get("thesis", "")
                 alert_items.append((ticker, change, data.get("price") or 0, thesis))
-                _alerted_today[ticker] = today
+                mark_alerted_today(ticker, today)
                 # Track drops for recovery watch
                 if change < -8.0:
                     _drop_watch[ticker] = {
