@@ -165,22 +165,24 @@ def send_morning_briefing():
             except Exception:
                 return []
 
-        # All held tickers for theme sweep
-        held_tickers = [t for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
+        # Split Notion holdings into portfolio (held) and watchlist (monitoring only)
+        portfolio_data = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
+        watchlist_data = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) == 0}
+        held_tickers    = list(portfolio_data.keys())
+        all_tickers     = list(WATCHLIST_DATA.keys())
 
-        with ThreadPoolExecutor(max_workers=6) as ex:
-            f_prices = ex.submit(get_live_prices, BRIEFING_TICKERS)
-            f_held_prices = ex.submit(get_live_prices, held_tickers)
-            f_macro = ex.submit(get_macro_news)
-            f_dates = ex.submit(get_earnings_dates, BRIEFING_TICKERS)
-            f_events = ex.submit(_fetch_last_night_events)
-            f_geo = ex.submit(_fetch_geopolitical_pulse)
-            prices = f_prices.result()
-            held_prices = f_held_prices.result()
-            macro = f_macro.result()
-            dates = f_dates.result()
-            last_night = f_events.result()
-            geo_pulse = f_geo.result()
+        with ThreadPoolExecutor(max_workers=5) as ex:
+            f_prices  = ex.submit(get_live_prices, all_tickers)
+            f_macro   = ex.submit(get_macro_news)
+            f_dates   = ex.submit(get_earnings_dates, held_tickers)
+            f_events  = ex.submit(_fetch_last_night_events)
+            f_geo     = ex.submit(_fetch_geopolitical_pulse)
+            prices      = f_prices.result()
+            held_prices = {t: prices[t] for t in held_tickers if t in prices}
+            macro       = f_macro.result()
+            dates       = f_dates.result()
+            last_night  = f_events.result()
+            geo_pulse   = f_geo.result()
 
         # Read-through: check if any trigger tickers moved big overnight
         from src.tools.read_through import get_morning_read_through
@@ -208,8 +210,10 @@ def send_morning_briefing():
         ]
         upcoming.sort(key=lambda x: x[1]["days_until"])
 
+        # prices_text for DeepSeek prompt = held positions only
         prices_text = ""
-        for t, d in prices.items():
+        for t in held_tickers:
+            d = prices.get(t)
             if not d:
                 continue
             direction = "▲" if (d.get("change_pct") or 0) > 0 else "▼"
@@ -276,12 +280,34 @@ Rules:
         briefing = call_deepseek(prompt, max_tokens=600, temperature=0.3, timeout=60) or "Could not generate AI briefing."
 
         header = f"🌅 <b>Morning Briefing — {datetime.now().strftime('%A %d %B %Y')}</b>\n\n"
-        price_block = "<b>Watchlist:</b>\n"
-        for t, d in prices.items():
+
+        # Portfolio section — all held positions, sorted by biggest mover first
+        port_rows = []
+        for t in held_tickers:
+            d = prices.get(t)
             if not d:
                 continue
-            direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
-            price_block += f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({d.get('change_pct'):+.2f}%)\n"
+            chg = d.get("change_pct") or 0
+            direction = "📈" if chg > 0 else "📉"
+            port_rows.append((abs(chg), f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({chg:+.2f}%)"))
+        port_rows.sort(key=lambda x: x[0], reverse=True)
+        price_block = f"<b>📊 Portfolio ({len(portfolio_data)} positions):</b>\n"
+        price_block += "\n".join(row for _, row in port_rows) + "\n"
+
+        # Watchlist section — only movers ≥2%, sorted by abs move, capped at 15
+        wl_rows = []
+        for t in watchlist_data:
+            d = prices.get(t)
+            if not d:
+                continue
+            chg = d.get("change_pct") or 0
+            if abs(chg) >= 2.0:
+                direction = "📈" if chg > 0 else "📉"
+                wl_rows.append((abs(chg), f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({chg:+.2f}%)"))
+        wl_rows.sort(key=lambda x: x[0], reverse=True)
+        if wl_rows:
+            price_block += f"\n<b>👁 Watchlist movers (≥2%):</b>\n"
+            price_block += "\n".join(row for _, row in wl_rows[:15]) + "\n"
 
         send_telegram(header + price_block + "\n" + briefing)
         print(f"[{datetime.now().strftime('%H:%M')}] Morning briefing sent.")
