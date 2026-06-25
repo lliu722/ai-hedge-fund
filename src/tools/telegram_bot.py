@@ -281,13 +281,15 @@ def get_portfolio() -> str:
     rows.sort(key=lambda x: -x[3])
 
     for t, d, price, value, dollar_pnl, pnl_pct in rows:
-        direction = "📈" if (d.get("change_pct") or 0) > 0 else "📉"
+        chg = d.get("change_pct") or 0
+        today_icon = "▲" if chg > 0 else "▼"
         pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
-        value_str = f"${value:,.0f}"
-        dollar_str = f"${dollar_pnl:+,.0f}"
+        shares = PORTFOLIO.get(t, {}).get("shares", 0)
+        avg_cost = PORTFOLIO.get(t, {}).get("avg_cost", 0)
         msg += (
-            f"{direction} <b>{fmt(t)}</b>: ${price} ({d.get('change_pct'):+.2f}%)\n"
-            f"   {pnl_emoji} {value_str} · P&L {dollar_str} ({pnl_pct:+.1f}%)\n"
+            f"<b>{fmt(t)}</b>  ${price:.2f}  {today_icon}{abs(chg):.2f}% today\n"
+            f"  {shares:.0f}sh @ ${avg_cost:.2f} cost · val ${value:,.0f}\n"
+            f"  {pnl_emoji} P&amp;L {dollar_pnl:+,.0f} ({pnl_pct:+.1f}%)\n\n"
         )
 
     if total_value > 0:
