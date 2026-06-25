@@ -286,11 +286,12 @@ def get_portfolio() -> str:
         pnl_sign = "+" if pnl_pct >= 0 else ""
         today_sign = "+" if chg >= 0 else ""
         shares = PORTFOLIO.get(t, {}).get("shares", 0)
+        weight = (value / total_value * 100) if total_value else 0
         msg += (
             f"<b>{fmt(t)}</b>  "
             f"<i>today {today_arrow}{today_sign}{chg:.1f}%</i>  "
             f"{'🟢' if pnl_pct >= 0 else '🔴'} <b>{pnl_sign}{pnl_pct:.1f}%</b>\n"
-            f"  ${price:.2f} · {shares:.0f}sh · ${value:,.0f}\n"
+            f"  ${price:.2f} · {shares:.0f}sh · {weight:.1f}%\n"
         )
 
     if total_value > 0:
