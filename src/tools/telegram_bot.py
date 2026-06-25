@@ -1141,6 +1141,22 @@ def get_theme_analysis(theme: str) -> str:
 
 
 @tool
+def get_theme_radar() -> str:
+    """
+    Scan ~55 sector + thematic ETFs for emerging themes moving outside the current portfolio.
+    Uses Z-score momentum vs 52-week history + portfolio correlation filter.
+    Works for ALL sectors: biotech, consumer, energy, EM, industrials — not just tech.
+    Use when user says 'any new themes', 'what sectors are moving', 'theme radar', 'what am I missing'.
+    """
+    from src.tools.theme_radar import run_theme_radar
+    held = [t for t, d in PORTFOLIO.items() if (d.get("shares") or 0) > 0]
+    result = run_theme_radar(held)
+    if not result:
+        return "🔭 <b>Theme Radar</b>\n\nNo sectors firing above threshold this week. Everything moving is already in your portfolio or in normal range."
+    return result
+
+
+@tool
 def get_monthly_review() -> str:
     """
     Monthly 复盘 — look-back on closed trades, best/worst decisions, and 3 lessons.
@@ -1247,6 +1263,7 @@ tools = [
     manage_watchlist_target,
     get_theme_health,
     get_monthly_review,
+    get_theme_radar,
 ]
 
 if _MEMORY_BACKEND == "sqlite":

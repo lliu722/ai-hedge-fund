@@ -476,8 +476,9 @@ def send_weekly_digest():
                 max_results=8, search_depth="basic",
             ))
 
-        macro_tickers = list(MACRO_TICKERS.keys())
+        macro_tickers  = list(MACRO_TICKERS.keys())
         sector_tickers = list(SECTOR_ETFS.keys())
+        held_tickers   = [t for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
 
         from src.tools.momentum import get_weekly_momentum_digest
 
@@ -536,6 +537,9 @@ def send_weekly_digest():
             f_momentum      = ex.submit(get_weekly_momentum_digest)
             f_pnl           = ex.submit(_compute_portfolio_pnl)
             f_theme_health  = ex.submit(compute_theme_health)
+            f_theme_radar   = ex.submit(
+                lambda: __import__("src.tools.theme_radar", fromlist=["run_theme_radar"]).run_theme_radar(held_tickers)
+            )
 
             macro_prices    = f_macro_prices.result()
             sector_prices   = f_sector_prices.result()
@@ -546,6 +550,7 @@ def send_weekly_digest():
             momentum_digest = f_momentum.result()
             pnl_block       = f_pnl.result()
             theme_health    = f_theme_health.result()
+            theme_radar     = f_theme_radar.result()
 
         # Build macro summary
         macro_text = ""
@@ -663,7 +668,10 @@ Rules:
             header += theme_health + "\n\n"
         from src.tools.recommendations import get_recommendations
         picks = get_recommendations()
-        send_telegram(header + pnl_block + "\n" + digest + "\n\n" + picks)
+        msg = header + pnl_block + "\n" + digest + "\n\n" + picks
+        send_telegram(msg)
+        if theme_radar:
+            send_telegram(theme_radar)
         print(f"[{datetime.now().strftime('%H:%M')}] Weekly digest sent.")
 
     except Exception as e:
