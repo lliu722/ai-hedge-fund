@@ -4,7 +4,7 @@ identify which portfolio positions are affected and why, then synthesize the
 implications via DeepSeek.
 """
 from concurrent.futures import ThreadPoolExecutor
-from src.tools.llm import call_deepseek, tavily_search
+from src.tools.llm import call_deepseek, tavily_search, clean_news, fmt_snippet
 
 
 # ── Read-Through Map ──────────────────────────────────────────────────────────
@@ -202,13 +202,14 @@ def get_read_through_analysis(trigger_ticker: str, held_tickers: list,
 
     # Fetch latest news about the trigger if not provided
     if not news_context:
-        results = tavily_search(f"{trigger} earnings results guidance latest news today", max_results=6)
+        results = clean_news(tavily_search(f"{trigger} earnings results guidance latest news today", max_results=8))
         if results:
             news_context = ""
             for a in results[:5]:
                 news_context += f"- {a.get('title', '')}\n"
-                if a.get("content"):
-                    news_context += f"  {a['content'][:200]}\n"
+                snip = fmt_snippet(a.get("content", ""), 200)
+                if snip:
+                    news_context += f"  {snip}\n"
         else:
             news_context = "No news available."
 

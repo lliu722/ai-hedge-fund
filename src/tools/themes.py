@@ -5,7 +5,7 @@ signals, search queries, and what to watch for.
 """
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from src.tools.llm import call_deepseek, tavily_search
+from src.tools.llm import call_deepseek, tavily_search, clean_news, fmt_snippet
 
 
 # ── Ticker → Thesis mapping ───────────────────────────────────────────────────
@@ -252,10 +252,11 @@ def get_theme_analysis(theme: str, held_tickers: list, prices: dict) -> str:
 
     # Fetch Tavily news for this theme
     news_text = ""
-    for a in tavily_search(meta["search_query"], max_results=6)[:5]:
+    for a in clean_news(tavily_search(meta["search_query"], max_results=8))[:5]:
         news_text += f"- {a.get('title', '')}\n"
-        if a.get("content"):
-            news_text += f"  {a['content'][:200]}\n"
+        snip = fmt_snippet(a.get("content", ""), 200)
+        if snip:
+            news_text += f"  {snip}\n"
 
     # Build price summary
     price_lines = []

@@ -1,6 +1,7 @@
 import os
 from tavily import TavilyClient
 from datetime import datetime
+from src.tools.llm import clean_news
 
 client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
 
@@ -19,7 +20,7 @@ def get_news_for_tickers(tickers, days_back=2):
         query = " ".join(relevant) + " stock news earnings AI"
         try:
             response = client.search(query=query, max_results=10, search_depth="basic", include_answer=False)
-            articles = response.get("results", [])
+            articles = clean_news(response.get("results", []))
             for article in articles:
                 title = article.get("title", "").upper()
                 content = article.get("content", "").upper()
@@ -38,8 +39,8 @@ def get_news_for_tickers(tickers, days_back=2):
 def get_macro_news():
     query = "AI chip semiconductor export control Fed rates tech earnings"
     try:
-        response = client.search(query=query, max_results=5, search_depth="basic", include_answer=False)
-        return response.get("results", [])
+        response = client.search(query=query, max_results=8, search_depth="basic", include_answer=False)
+        return clean_news(response.get("results", []))
     except Exception as e:
         print(f"Error fetching macro news: {e}")
         return []

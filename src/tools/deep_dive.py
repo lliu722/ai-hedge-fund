@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from src.tools.prices import get_live_prices
 from src.tools.news_fetcher import get_news_for_tickers
 from src.tools.sec_filings import get_filing_summary
-from src.tools.llm import call_deepseek
+from src.tools.llm import call_deepseek, fmt_snippet
 
 
 def deep_dive(ticker: str) -> str:
@@ -73,8 +73,9 @@ def deep_dive(ticker: str) -> str:
     if ticker_news:
         for a in ticker_news[:5]:
             news_context += f"• {a['title']}\n"
-            if a.get('content'):
-                news_context += f"  {a['content'][:200]}\n"
+            snip = fmt_snippet(a.get("content", ""), 200)
+            if snip:
+                news_context += f"  {snip}\n"
     else:
         news_context += "No recent news found — use training knowledge.\n"
 

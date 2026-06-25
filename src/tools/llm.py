@@ -60,3 +60,45 @@ def tavily_search(
     except Exception as e:
         print(f"[Tavily] Error: {e} — query: {query[:60]}")
     return []
+
+
+_JUNK_DOMAINS = (
+    "investing.com", "tradingview.com", "barchart.com", "tradingeconomics.com",
+    "marketbeat.com", "stockanalysis.com", "macrotrends.net", "wisesheets.io",
+    "simplywall.st", "gurufocus.com",
+)
+_JUNK_TITLES = (
+    "calendar", "schedule", "quote - chart", "stock market index",
+    "latest news and updates", "stock screener", "historical data",
+    "r/stocks", "r/investing",
+)
+
+
+def clean_news(results: list, min_content: int = 60) -> list:
+    """
+    Filter Tavily results — removes junk SEO pages, empty content, markdown noise.
+    Use after every tavily_search() before displaying or passing to DeepSeek.
+    """
+    out = []
+    for r in results:
+        url   = r.get("url", "").lower()
+        title = r.get("title", "").lower()
+        content = r.get("content", "").strip()
+        if any(d in url for d in _JUNK_DOMAINS):
+            continue
+        if any(k in title for k in _JUNK_TITLES):
+            continue
+        if len(content) < min_content:
+            continue
+        if content.startswith("[") or content.startswith("]("):
+            continue
+        out.append(r)
+    return out
+
+
+def fmt_snippet(content: str, max_len: int = 150) -> str:
+    """Return a clean display snippet from Tavily content, or empty string if useless."""
+    c = content.strip() if content else ""
+    if not c or len(c) < 40 or c.startswith("[") or c.startswith("]("):
+        return ""
+    return c[:max_len]

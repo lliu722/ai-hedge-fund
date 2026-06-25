@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
 
 load_dotenv()
-from src.tools.llm import call_deepseek, tavily_search
+from src.tools.llm import call_deepseek, tavily_search, clean_news, fmt_snippet
 
 
 def load_watchlist():
@@ -109,16 +109,15 @@ def fetch_geopolitical_pulse() -> str:
     Public — used by both the morning briefing and the on-demand bot tool.
     """
     try:
-        articles = tavily_search(
+        articles = clean_news(tavily_search(
             "geopolitical risk US China Taiwan Europe Middle East trade tariffs war today",
-            max_results=8,
-            search_depth="basic",
-        )
+            max_results=10, search_depth="basic",
+        ))
         if not articles:
             return ""
 
         news_text = "\n".join(
-            f"- {a.get('title', '')} — {a.get('content', '')[:150]}"
+            f"- {a.get('title', '')} — {fmt_snippet(a.get('content', ''), 150)}"
             for a in articles[:7]
         )
 
@@ -157,11 +156,10 @@ def send_morning_briefing():
             held = [d.get("name", t) for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0]
             names_str = " ".join(held[:8])
             try:
-                return tavily_search(
+                return clean_news(tavily_search(
                     f"earnings results conference call after hours {names_str} yesterday",
-                    max_results=5,
-                    search_depth="basic",
-                )
+                    max_results=8, search_depth="basic",
+                ))
             except Exception:
                 return []
 
@@ -222,8 +220,9 @@ def send_morning_briefing():
         news_text = ""
         for a in macro[:5]:
             news_text += f"- {a['title']}\n"
-            if a.get("content"):
-                news_text += f"  {a['content'][:200]}\n"
+            snip = fmt_snippet(a.get("content", ""), 200)
+            if snip:
+                news_text += f"  {snip}\n"
 
         earnings_text = ""
         if upcoming:
@@ -236,8 +235,9 @@ def send_morning_briefing():
         if last_night:
             for a in last_night[:4]:
                 events_text += f"- {a.get('title', '')}\n"
-                if a.get("content"):
-                    events_text += f"  {a['content'][:200]}\n"
+                snip = fmt_snippet(a.get("content", ""), 200)
+                if snip:
+                    events_text += f"  {snip}\n"
 
         prompt = f"""You are an AI investment research assistant. Write a concise morning briefing for an AI infrastructure equity investor.
 
@@ -458,19 +458,18 @@ def send_weekly_digest():
         from src.tools.notify import send_telegram
 
         # Fetch macro indices, sector ETFs, AI watchlist, news in parallel
+
         def fetch_outside_news():
-            return tavily_search(
+            return clean_news(tavily_search(
                 "stock market sector rotation theme investing week",
-                max_results=8,
-                search_depth="basic",
-            )
+                max_results=10, search_depth="basic",
+            ))
 
         def fetch_macro_news():
-            return tavily_search(
+            return clean_news(tavily_search(
                 "Fed interest rates CPI jobs inflation macro economic outlook week",
-                max_results=5,
-                search_depth="basic",
-            )
+                max_results=8, search_depth="basic",
+            ))
 
         macro_tickers = list(MACRO_TICKERS.keys())
         sector_tickers = list(SECTOR_ETFS.keys())
@@ -589,15 +588,17 @@ def send_weekly_digest():
         outside_text = ""
         for a in outside_news[:5]:
             outside_text += f"- {a.get('title', '')}\n"
-            if a.get("content"):
-                outside_text += f"  {a['content'][:150]}\n"
+            snip = fmt_snippet(a.get("content", ""), 150)
+            if snip:
+                outside_text += f"  {snip}\n"
 
         # Macro news
         macro_news_text = ""
         for a in macro_news[:4]:
             macro_news_text += f"- {a.get('title', '')}\n"
-            if a.get("content"):
-                macro_news_text += f"  {a['content'][:150]}\n"
+            snip = fmt_snippet(a.get("content", ""), 150)
+            if snip:
+                macro_news_text += f"  {snip}\n"
 
         prompt = f"""You are a senior investment research analyst. Write a weekly digest for an AI infrastructure equity investor.
 
@@ -676,10 +677,11 @@ def _thesis_verdict(ticker: str, change: float, thesis: str, price: float) -> st
             context = f"Investment thesis on file: {thesis[:300]}"
         else:
             # No thesis saved — fetch recent news to form a verdict
-            results = tavily_search(f"{ticker} stock drop news today reason", max_results=3, timeout=8)
+            from src.tools.llm import clean_news, fmt_snippet
+            results = clean_news(tavily_search(f"{ticker} stock drop news today reason", max_results=5, timeout=8))
             if results:
                 context = "Recent news:\n" + "\n".join(
-                    f"- {r.get('title', '')} {r.get('content', '')[:150]}" for r in results
+                    f"- {r.get('title', '')} {fmt_snippet(r.get('content', ''), 150)}" for r in results
                 )
             else:
                 context = "No thesis or news available — assess based on ticker name and drop size only."
@@ -1037,21 +1039,19 @@ def check_breaking_news():
 
         # Search 1: held company breaking news
         try:
-            all_articles += tavily_search(
+            all_articles += clean_news(tavily_search(
                 f"breaking news {top_held_names} today",
-                max_results=8,
-                search_depth="basic",
-            )
+                max_results=10, search_depth="basic",
+            ))
         except Exception as e:
             print(f"News search 1 error: {e}")
 
         # Search 2: macro / geopolitical breaking news
         try:
-            all_articles += tavily_search(
+            all_articles += clean_news(tavily_search(
                 "breaking news market moving geopolitical trade policy interest rates today",
-                max_results=8,
-                search_depth="basic",
-            )
+                max_results=10, search_depth="basic",
+            ))
         except Exception as e:
             print(f"News search 2 error: {e}")
 
@@ -1073,7 +1073,7 @@ def check_breaking_news():
 
         # Ask DeepSeek to filter for genuinely market-moving news
         headlines_text = "\n".join(
-            f"{i+1}. {a.get('title', '')} — {a.get('content', '')[:150]}"
+            f"{i+1}. {a.get('title', '')} — {fmt_snippet(a.get('content', ''), 150)}"
             for i, a in enumerate(new_articles)
         )
 
@@ -1358,10 +1358,10 @@ def send_market_open_alert(market: str):
             msg += f"\n<b>📋 Economic Events Today</b>\n"
             for item in econ_events:
                 title = item.get("title", "")[:90]
-                snippet = item.get("content", "")[:120].strip()
+                snip = fmt_snippet(item.get("content", ""), 120)
                 msg += f"• {title}\n"
-                if snippet:
-                    msg += f"  <i>{snippet}</i>\n"
+                if snip:
+                    msg += f"  <i>{snip}</i>\n"
 
         # Section 4: actual market news (filtered)
         if market_news:
