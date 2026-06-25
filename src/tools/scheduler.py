@@ -1184,7 +1184,9 @@ def send_market_open_alert(market: str):
 
         # ── Segment tickers by market ──────────────────────────────────────────
         if market == "HK":
-            mkt_tickers = [t for t in held if t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ")]
+            hk_tickers = [t for t in held if t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ")]
+            # Fall back to all held positions — most users hold US stocks that react to Asian session
+            mkt_tickers = hk_tickers if hk_tickers else list(held.keys())
             mkt_label = "🇭🇰 HK Open"
             mkt_time  = "9:30am HKT"
         else:  # US
