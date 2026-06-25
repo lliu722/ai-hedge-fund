@@ -288,8 +288,14 @@ Rules:
             if not d:
                 continue
             chg = d.get("change_pct") or 0
+            price = d.get("price")
             direction = "📈" if chg > 0 else "📉"
-            port_rows.append((abs(chg), f"{direction} <b>{fmt(t)}</b>: ${d.get('price')} ({chg:+.2f}%)"))
+            line = f"{direction} <b>{fmt(t)}</b>: ${price} ({chg:+.2f}%)"
+            avg_cost = portfolio_data.get(t, {}).get("avg_cost")
+            if avg_cost and price:
+                pnl = (price - avg_cost) / avg_cost * 100
+                line += f" · <i>{pnl:+.1f}%</i>"
+            port_rows.append((abs(chg), line))
         port_rows.sort(key=lambda x: x[0], reverse=True)
         price_block = f"<b>📊 Portfolio ({len(portfolio_data)} positions):</b>\n"
         price_block += "\n".join(row for _, row in port_rows) + "\n"
