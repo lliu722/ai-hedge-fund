@@ -1251,17 +1251,19 @@ def send_market_open_alert(market: str):
                 d.get("name", t) for t, d in list(held.items())[:6]
             )
             if market == "HK":
-                query = f"Hong Kong stock market open {today_str} China news"
+                query = f"{top_names} stock news overnight Asia {today_str}"
             else:
                 query = f"stock market pre-market {today_str} {top_names}"
-            results = tavily_search(query, max_results=6, search_depth="basic")
-            # Filter out generic calendar/schedule pages — only keep actual news
-            junk_keywords = ("calendar", "schedule", "investing.com", "tradingview",
-                             "barchart", "yahoo finance", "r/stock")
-            return [
+            results = tavily_search(query, max_results=8, search_depth="basic")
+            junk_domains = ("calendar", "schedule", "investing.com", "tradingview",
+                            "barchart", "yahoo finance", "r/stock", "tradingeconomics",
+                            "stock market index", "quote - chart", "latest news and updates")
+            filtered = [
                 r for r in results
-                if not any(k in r.get("title", "").lower() for k in junk_keywords)
-            ][:4]
+                if not any(k in (r.get("title", "") + r.get("url", "")).lower() for k in junk_domains)
+                and len(r.get("content", "")) > 80
+            ]
+            return filtered[:4]
 
         def fetch_economic_events():
             """Specific economic events due today — date-anchored query."""
@@ -1305,7 +1307,7 @@ def send_market_open_alert(market: str):
         elif market == "US":
             msg += f"<b>📊 Your US Positions</b> <i>(last close · pre-mkt data unavailable)</i>\n"
         else:
-            msg += f"<b>📊 Your HK Positions</b> <i>(last close)</i>\n"
+            msg += f"<b>📊 Your Portfolio</b> <i>(last close · Asia session)</i>\n"
 
         position_lines = []
         for ticker in mkt_tickers:
@@ -1366,8 +1368,10 @@ def send_market_open_alert(market: str):
             label = "🌙 Overnight News" if market == "HK" else "🌅 Pre-Market News"
             msg += f"\n<b>{label}</b>\n"
             for item in market_news:
-                title = item.get("title", "")[:90]
-                snippet = item.get("content", "")[:120].strip()
+                title = item.get("title", "")[:80].strip()
+                content = item.get("content", "").strip()
+                # Only show snippet if it adds info (not markdown noise or short filler)
+                snippet = content[:130] if len(content) > 40 and not content.startswith("[") else ""
                 msg += f"• {title}\n"
                 if snippet:
                     msg += f"  <i>{snippet}</i>\n"
