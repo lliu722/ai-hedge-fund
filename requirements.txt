@@ -1,5 +1,0 @@
-tavily-python
-yfinance
-requests
-python-dotenv
-PyPortfolioOpt
