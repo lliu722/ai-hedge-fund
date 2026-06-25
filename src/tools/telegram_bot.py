@@ -1238,6 +1238,91 @@ def get_monthly_review() -> str:
     return header + stats + result
 
 
+@tool
+def get_quant_screen() -> str:
+    """
+    Quant factor screen — ranks all portfolio + watchlist names by composite score
+    (momentum 40%, quality 30%, value 30%). Shows top 10 and bottom 5.
+    Use when user says 'quant screen', 'factor screen', 'quant rank', 'top quant picks',
+    'quant scores', or asks for a quantitative view of the portfolio.
+    """
+    from src.tools.notion_holdings import get_all_holdings
+    from src.tools.quant.signals import run_quant_screen
+    holdings = get_all_holdings()
+    tickers  = [h["ticker"] for h in holdings if h.get("ticker")]
+    if not tickers:
+        return "❌ No tickers found in Notion."
+    return run_quant_screen(tickers, top_n=10)
+
+
+@tool
+def get_quant_signal(ticker: str) -> str:
+    """
+    Quant factor breakdown for a single ticker — momentum, value, quality z-scores,
+    composite score, and rank within the universe.
+    Use when user says 'quant signal TICKER', 'quant score TICKER', 'factor breakdown TICKER'.
+    """
+    from src.tools.notion_holdings import get_all_holdings
+    from src.tools.quant.signals import run_single_signal
+    holdings = get_all_holdings()
+    tickers  = [h["ticker"] for h in holdings if h.get("ticker")]
+    return run_single_signal(ticker.upper(), tickers)
+
+
+@tool
+def get_quant_optimize(total_value: float = 100000) -> str:
+    """
+    Portfolio optimizer — suggests max-Sharpe weights and exact share counts
+    across buy-rated names in the Notion watchlist.
+    Use when user says 'quant optimize', 'optimize portfolio', 'optimal weights',
+    or 'how should I allocate across my watchlist'.
+    Optional: pass total_value in USD (default 100000).
+    """
+    from src.tools.notion_holdings import get_all_holdings
+    from src.tools.quant.optimizer import run_optimizer
+    holdings = get_all_holdings()
+    # Optimize across BUY-rated watchlist names + held positions
+    tickers  = [
+        h["ticker"] for h in holdings
+        if h.get("ticker") and (h.get("rating", "").upper() == "BUY" or (h.get("shares") or 0) > 0)
+    ]
+    if len(tickers) < 3:
+        return "❌ Need at least 3 BUY-rated or held names to optimize."
+    return run_optimizer(tickers, total_value=float(total_value))
+
+
+@tool
+def get_quant_paper() -> str:
+    """
+    Quant paper portfolio — shows open simulated positions and recent closed trades with P&L.
+    Use when user says 'paper portfolio', 'quant paper', 'paper trades', 'simulated portfolio'.
+    To open: 'quant open TICKER'. To close: 'quant close TICKER'.
+    """
+    from src.tools.quant.paper_trade import get_paper_portfolio
+    return get_paper_portfolio()
+
+
+@tool
+def manage_quant_paper(action: str, ticker: str, shares: float = 100) -> str:
+    """
+    Open or close a quant paper trade.
+    action: 'open' or 'close'
+    ticker: stock ticker symbol
+    shares: number of shares (default 100, only used when opening)
+    Use when user says 'quant open TICKER', 'quant close TICKER',
+    'paper buy TICKER', 'paper sell TICKER'.
+    """
+    from src.tools.quant.paper_trade import open_position, close_position
+    a = action.strip().lower()
+    t = ticker.upper().strip()
+    if a == "open":
+        return open_position(t, shares=shares)
+    elif a == "close":
+        return close_position(t)
+    else:
+        return f"❌ Unknown action '{action}'. Use 'open' or 'close'."
+
+
 tools = [
     deep_dive,
     get_price,
@@ -1278,6 +1363,11 @@ tools = [
     get_monthly_review,
     get_theme_radar,
     get_proactive_dive,
+    get_quant_screen,
+    get_quant_signal,
+    get_quant_optimize,
+    get_quant_paper,
+    manage_quant_paper,
 ]
 
 if _MEMORY_BACKEND == "sqlite":

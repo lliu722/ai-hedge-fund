@@ -683,6 +683,17 @@ Rules:
         send_telegram(msg)
         if theme_radar:
             send_telegram(theme_radar)
+
+        # Quant screen — separate 3rd message, fully independent of V3
+        try:
+            from src.tools.quant.signals import run_quant_screen
+            all_tickers = list(WATCHLIST_DATA.keys())
+            quant_msg = run_quant_screen(all_tickers, top_n=10)
+            if quant_msg:
+                send_telegram(quant_msg)
+        except Exception as qe:
+            print(f"[quant screen] error: {qe}")
+
         print(f"[{datetime.now().strftime('%H:%M')}] Weekly digest sent.")
 
     except Exception as e:
