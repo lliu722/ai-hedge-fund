@@ -1239,20 +1239,23 @@ def get_monthly_review() -> str:
 
 
 @tool
-def get_quant_screen() -> str:
+def get_quant_screen(universe: str = "notion") -> str:
     """
-    Quant factor screen — ranks all portfolio + watchlist names by composite score
-    (momentum 40%, quality 30%, value 30%). Shows top 10 and bottom 5.
+    Quant factor screen — ranks names by composite score (momentum 40%, quality 30%, value 30%).
+    universe: 'notion' (default, 98 Notion names) or 'full' (S&P 500 + Notion, ~500 names).
     Use when user says 'quant screen', 'factor screen', 'quant rank', 'top quant picks',
-    'quant scores', or asks for a quantitative view of the portfolio.
+    'quant scores', 'full universe screen', or asks for a quantitative view of the portfolio.
     """
     from src.tools.notion_holdings import get_all_holdings
     from src.tools.quant.signals import run_quant_screen
-    holdings = get_all_holdings()
-    tickers  = [h["ticker"] for h in holdings if h.get("ticker")]
+    from src.tools.quant.universe import get_universe
+    holdings        = get_all_holdings()
+    notion_tickers  = [h["ticker"] for h in holdings if h.get("ticker")]
+    tickers         = get_universe(notion_tickers, mode=universe)
     if not tickers:
-        return "❌ No tickers found in Notion."
-    return run_quant_screen(tickers, top_n=10)
+        return "❌ No tickers found."
+    top_n = 15 if universe == "full" else 10
+    return run_quant_screen(tickers, top_n=top_n)
 
 
 @tool
@@ -1300,6 +1303,25 @@ def get_quant_paper() -> str:
     """
     from src.tools.quant.paper_trade import get_paper_portfolio
     return get_paper_portfolio()
+
+
+@tool
+def get_quant_backtest(years: int = 2, universe: str = "notion") -> str:
+    """
+    Backtests the 12-1 momentum factor on the chosen universe using walk-forward monthly simulation.
+    years: lookback period in years (default 2, max 5)
+    universe: 'notion' (98 names) or 'full' (~500 names, takes longer)
+    Use when user says 'backtest', 'quant backtest', 'test the strategy', 'how does momentum perform',
+    'quant performance', 'validate the signal'.
+    """
+    from src.tools.notion_holdings import get_all_holdings
+    from src.tools.quant.backtest import run_backtest
+    from src.tools.quant.universe import get_universe
+    holdings        = get_all_holdings()
+    notion_tickers  = [h["ticker"] for h in holdings if h.get("ticker")]
+    tickers         = get_universe(notion_tickers, mode=universe)
+    y               = max(1, min(int(years), 5))
+    return run_backtest(tickers, years=y)
 
 
 @tool
@@ -1366,6 +1388,7 @@ tools = [
     get_quant_screen,
     get_quant_signal,
     get_quant_optimize,
+    get_quant_backtest,
     get_quant_paper,
     manage_quant_paper,
 ]
