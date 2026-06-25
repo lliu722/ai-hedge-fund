@@ -8,7 +8,7 @@ Internal document. Updated after every meaningful build. Single source of truth 
 
 A personal investment office running 24/7 as a Telegram bot (@AI_InvestorL_bot) on Railway. Built on DeepSeek V4 + LangGraph. Monitors 98 names (41 held, 57 watchlist), sends automated briefings and alerts, and responds to natural language queries.
 
-**39 tools registered. ~7,500 lines across 22 files in src/tools/.**
+**45 tools registered. ~8,500 lines across 27 files in src/tools/.**
 
 ---
 
@@ -39,6 +39,12 @@ A personal investment office running 24/7 as a Telegram bot (@AI_InvestorL_bot) 
 | `sec_filings.py` | SEC EDGAR: 10-K, 10-Q, 8-K fetcher | Change filing types or parsing |
 | `notify.py` | Telegram message sender. HTML parse mode. | Change message formatting or delivery |
 | `api.py` | FastAPI health endpoint for Railway | Change health check behaviour |
+| `quant/factors.py` | 3-factor model: momentum (12-1m, 40%), quality (ROE+margin, 30%), value (inv-PE, 30%). Z-scored cross-sectionally. 20 parallel yfinance workers. | Change factor weights or add new factors |
+| `quant/signals.py` | Composite score → BUY/WATCH/AVOID (top/bottom 20%). Full screen + single-ticker breakdown. | Change signal cutoffs or output format |
+| `quant/optimizer.py` | PyPortfolioOpt max-Sharpe + DiscreteAllocation (exact share counts). Ledoit-Wolf covariance shrinkage. | Change optimization objective or constraints |
+| `quant/backtest.py` | Walk-forward monthly 12-1 momentum backtest. No external libs. Ann. return, vol, Sharpe, drawdown, beat-SPY %. | Change strategy or lookback |
+| `quant/paper_trade.py` | SQLite paper portfolio (quant_paper_trades table). Open/close simulated positions with real-time P&L. | Change paper trade logic |
+| `quant/universe.py` | Two-mode universe: 98 Notion names or S&P 500 (~500) fetched from Wikipedia. Session-cached. | Add/change universe sources |
 
 ---
 
@@ -174,6 +180,8 @@ A personal investment office running 24/7 as a Telegram bot (@AI_InvestorL_bot) 
 - Monthly 复盘 — auto-pushed 1st of month + get_monthly_review on-demand
 - Theme Radar — 55 ETF Z-score scanner, all sectors, Sunday digest + on-demand
 - Proactive Analyst (Mode 2) — extracts new names from morning news, auto mini-dive
+- V3 Quant (parallel system) — factor screen (momentum/quality/value), optimizer (PyPortfolioOpt), backtest (walk-forward 12-1 momentum), paper trading (SQLite). Universe: 98 Notion names or S&P 500 ~500 names.
+- Keyboard redesign — 4-row inline keyboard: Portfolio/Watchlist, Briefing/Earnings, Deep Dive/Quant Screen, AI Picks/Explain
 
 ---
 
@@ -186,7 +194,7 @@ A personal investment office running 24/7 as a Telegram bot (@AI_InvestorL_bot) 
 
 ---
 
-## Tool Count: 39
+## Tool Count: 45
 
 | Tool | What it does |
 |---|---|
@@ -229,6 +237,12 @@ A personal investment office running 24/7 as a Telegram bot (@AI_InvestorL_bot) 
 | get_monthly_review | Monthly 复盘 on-demand |
 | get_theme_radar | All-sector ETF Z-score theme scan |
 | get_proactive_dive | 4-section mini-dive on any ticker |
+| get_quant_screen | Factor screen — rank 98 or ~500 names by composite score |
+| get_quant_signal | Factor breakdown + rank for one ticker |
+| get_quant_optimize | Max-Sharpe weights + exact share counts (PyPortfolioOpt) |
+| get_quant_backtest | Walk-forward 12-1 momentum backtest, 1-5y |
+| get_quant_paper | Paper portfolio P&L |
+| manage_quant_paper | Open / close quant paper trades |
 
 ---
 
@@ -244,4 +258,4 @@ A personal investment office running 24/7 as a Telegram bot (@AI_InvestorL_bot) 
 
 ---
 
-*Last updated: 2026-06-25*
+*Last updated: 2026-06-25 — 45 tools, quant system live*
