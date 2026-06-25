@@ -667,13 +667,24 @@ Rules:
 # ── Thesis Verdict Helper ─────────────────────────────────────────────────────
 
 def _thesis_verdict(ticker: str, change: float, thesis: str, price: float) -> str:
-    """One-sentence verdict: thesis intact (buy dip) or thesis concern (wait)."""
-    if not thesis:
-        return ""
+    """One-sentence verdict: thesis intact (buy dip) or thesis concern (wait).
+    If no thesis stored, fetches context from Tavily and generates verdict from public info."""
     try:
+        if thesis:
+            context = f"Investment thesis on file: {thesis[:300]}"
+        else:
+            # No thesis saved — fetch recent news to form a verdict
+            results = tavily_search(f"{ticker} stock drop news today reason", max_results=3, timeout=8)
+            if results:
+                context = "Recent news:\n" + "\n".join(
+                    f"- {r.get('title', '')} {r.get('content', '')[:150]}" for r in results
+                )
+            else:
+                context = "No thesis or news available — assess based on ticker name and drop size only."
+
         prompt = (
             f"{ticker} is down {abs(change):.1f}% today (now ${price:.2f}).\n"
-            f"Investment thesis on file: {thesis[:300]}\n\n"
+            f"{context}\n\n"
             f"Is this drop a buy-the-dip opportunity (thesis intact) or a signal the thesis may be impaired?\n"
             f"Reply in ONE short sentence starting with either '🟢 Thesis intact:' or '🔴 Thesis concern:'"
         )
@@ -793,7 +804,7 @@ def check_price_alerts():
 
         if alert_items:
             # Fetch thesis verdicts in parallel for drops
-            drops = [(t, c, p, th) for t, c, p, th in alert_items if c < 0 and th]
+            drops = [(t, c, p, th) for t, c, p, th in alert_items if c < 0]
             verdicts = {}
             if drops:
                 with ThreadPoolExecutor(max_workers=4) as ex:
