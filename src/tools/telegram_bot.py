@@ -57,20 +57,25 @@ def fmt(ticker: str) -> str:
 def build_keyboard(chat_id: str = None) -> dict:
     """Build inline keyboard — Deep Dive button shows last ticker if known."""
     last = _last_ticker.get(chat_id) if chat_id else None
-    deep_dive_text = f"🔍 Deep Dive {last}" if last else "🔍 Deep Dive"
+    deep_dive_text = f"🔍 {last}" if last else "🔍 Deep Dive"
     deep_dive_data = f"deepdive:{last}" if last else "deepdive"
     return {
         "inline_keyboard": [
             [
-                {"text": "💼 Portfolio",  "callback_data": "portfolio"},
-                {"text": "🌅 Briefing",   "callback_data": "briefing"},
+                {"text": "💼 Portfolio",    "callback_data": "portfolio"},
+                {"text": "📋 Watchlist",    "callback_data": "watchlist"},
             ],
             [
-                {"text": "📅 Earnings",   "callback_data": "earnings"},
-                {"text": deep_dive_text,   "callback_data": deep_dive_data},
+                {"text": "🌅 Briefing",     "callback_data": "briefing"},
+                {"text": "📅 Earnings",     "callback_data": "earnings"},
             ],
             [
-                {"text": "🎓 Explain this", "callback_data": "explain"},
+                {"text": deep_dive_text,    "callback_data": deep_dive_data},
+                {"text": "📐 Quant Screen", "callback_data": "quant_screen"},
+            ],
+            [
+                {"text": "🤖 AI Picks",     "callback_data": "ai_picks"},
+                {"text": "🎓 Explain",      "callback_data": "explain"},
             ],
         ]
     }
@@ -1444,6 +1449,10 @@ def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
         send_message("⏳ Loading portfolio...", chat_id, show_buttons=False)
         handle_message("show my portfolio", chat_id)
 
+    elif callback_data == "watchlist":
+        send_message("⏳ Loading watchlist...", chat_id, show_buttons=False)
+        handle_message("show my watchlist", chat_id)
+
     elif callback_data == "briefing":
         send_message("⏳ Generating briefing...", chat_id, show_buttons=False)
         handle_message("morning briefing", chat_id)
@@ -1451,6 +1460,17 @@ def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
     elif callback_data == "earnings":
         send_message("⏳ Loading earnings calendar...", chat_id, show_buttons=False)
         handle_message("any earnings coming up", chat_id)
+
+    elif callback_data == "quant_screen":
+        send_message("⏳ Running quant factor screen...", chat_id, show_buttons=False)
+        handle_message("quant screen", chat_id)
+
+    elif callback_data == "ai_picks":
+        send_message(
+            "⏳ Running AI stock picks — Cathie Wood, Druckenmiller, Damodaran debating...",
+            chat_id, show_buttons=False
+        )
+        handle_message("picks", chat_id)
 
     elif callback_data.startswith("deepdive:"):
         ticker = callback_data.split(":", 1)[1]
@@ -1732,6 +1752,59 @@ def handle_message(text: str, chat_id: str):
             return
 
         # ── End write-back commands ────────────────────────────────────────────
+
+        # Quant shortcuts
+        _quant_screen_match = re.match(r'^quant\s+screen(?:\s+(full|notion))?$', _cleaned)
+        _quant_signal_match = re.match(r'^quant\s+signal\s+([A-Za-z]{1,6})$', _cleaned)
+        _quant_bt_match     = re.match(r'^quant\s+backtest(?:\s+(full|notion))?(?:\s+(\d))?$', _cleaned)
+        _quant_paper_match  = _cleaned in ("paper portfolio", "quant paper", "paper trades")
+        _quant_open_match   = re.match(r'^quant\s+open\s+([A-Za-z]{1,6})(?:\s+(\d+))?$', _cleaned)
+        _quant_close_match  = re.match(r'^quant\s+close\s+([A-Za-z]{1,6})$', _cleaned)
+
+        if _quant_screen_match:
+            universe = _quant_screen_match.group(1) or "notion"
+            send_message("⏳ Running quant factor screen...", chat_id, show_buttons=False)
+            from src.tools.quant.signals import run_quant_screen
+            from src.tools.quant.universe import get_universe
+            notion_tickers = list(WATCHLIST_TICKERS_SET)
+            tickers = get_universe(notion_tickers, mode=universe)
+            send_message(run_quant_screen(tickers, top_n=15 if universe == "full" else 10), chat_id)
+            return
+
+        if _quant_signal_match:
+            ticker = _quant_signal_match.group(1).upper()
+            send_message(f"⏳ Running quant signal for {ticker}...", chat_id, show_buttons=False)
+            from src.tools.quant.signals import run_single_signal
+            send_message(run_single_signal(ticker, list(WATCHLIST_TICKERS_SET)), chat_id)
+            return
+
+        if _quant_bt_match:
+            universe = _quant_bt_match.group(1) or "notion"
+            years    = int(_quant_bt_match.group(2) or 2)
+            send_message(f"⏳ Running quant backtest ({universe}, {years}y)...", chat_id, show_buttons=False)
+            from src.tools.quant.backtest import run_backtest
+            from src.tools.quant.universe import get_universe
+            tickers = get_universe(list(WATCHLIST_TICKERS_SET), mode=universe)
+            send_message(run_backtest(tickers, years=years), chat_id)
+            return
+
+        if _quant_paper_match:
+            from src.tools.quant.paper_trade import get_paper_portfolio
+            send_message(get_paper_portfolio(), chat_id)
+            return
+
+        if _quant_open_match:
+            ticker = _quant_open_match.group(1).upper()
+            shares = float(_quant_open_match.group(2) or 100)
+            from src.tools.quant.paper_trade import open_position
+            send_message(open_position(ticker, shares=shares), chat_id)
+            return
+
+        if _quant_close_match:
+            ticker = _quant_close_match.group(1).upper()
+            from src.tools.quant.paper_trade import close_position
+            send_message(close_position(ticker), chat_id)
+            return
 
         if lowered in ("picks", "recommendations", "what should i buy", "stock picks", "ai picks"):
             from src.tools.recommendations import get_recommendations
