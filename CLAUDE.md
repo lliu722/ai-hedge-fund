@@ -16,8 +16,8 @@ Multi-asset portfolio manager Telegram bot (@AI_InvestorL_bot) on Railway.
 Current theme: AI infrastructure. System is theme-agnostic.
 GitHub: github.com/lliu722/ai-hedge-fund
 
-## Current state (as of 2026-06-25)
-- **45 tools** registered in agent
+## Current state (as of 2026-06-26)
+- **46 tools** registered in agent
 - 41 held positions (shares > 0) — portfolio with dollar P&L
 - 57 watchlist names (shares = 0) — monitoring only
 - 98 total in Notion Holdings DB
