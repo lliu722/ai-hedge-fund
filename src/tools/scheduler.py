@@ -1239,7 +1239,7 @@ def send_market_open_alert(market: str):
 
         # ── Segment tickers by market ──────────────────────────────────────────
         if market == "HK":
-            mkt_tickers = list(held.keys())  # all held — shown at bottom for context
+            mkt_tickers = [t for t in held if t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ")]
             mkt_label = "🇭🇰 HK Open"
             mkt_time  = "9:30am HKT"
         else:  # US
@@ -1247,8 +1247,8 @@ def send_market_open_alert(market: str):
             mkt_label = "🇺🇸 US Open"
             mkt_time  = "9:30am ET"
 
-        if not mkt_tickers:
-            print(f"No held positions for {market} open alert.")
+        if not mkt_tickers and market == "US":
+            print(f"No held US positions for open alert.")
             return
 
         # ── Parallel fetches ───────────────────────────────────────────────────
