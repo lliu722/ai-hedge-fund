@@ -77,6 +77,9 @@ def build_keyboard(chat_id: str = None) -> dict:
                 {"text": "🤖 AI Picks",     "callback_data": "ai_picks"},
                 {"text": "🎓 Explain",      "callback_data": "explain"},
             ],
+            [
+                {"text": "🎯 Entry Points", "callback_data": "entry_points"},
+            ],
         ]
     }
 
@@ -1350,6 +1353,91 @@ def manage_quant_paper(action: str, ticker: str, shares: float = 100) -> str:
         return f"❌ Unknown action '{action}'. Use 'open' or 'close'."
 
 
+@tool
+def get_entry_points() -> str:
+    """
+    Entry point analysis across the watchlist and held positions.
+    Combines macro backdrop, sector rotation, valuation (fwd P/E, growth, PEG),
+    current price vs 52-week high, and produces tiered entry zones:
+    BUY NOW / WAIT FOR DIP / SET LIMIT / SKIP.
+    Also suggests funding source (what to trim).
+    Use when user asks 'entry points', 'when to buy', 'good entry', 'buy zones',
+    'what price should I buy', 'where to enter'.
+    """
+    from src.tools.notion_holdings import get_holdings_cached
+    from src.tools.prices import get_live_prices
+    from src.tools.llm import call_deepseek, tavily_search, clean_news, fmt_snippet
+    import yfinance as yf
+
+    held_raw = get_holdings_cached()
+    watchlist = {t: d for t, d in held_raw.items() if d.get("shares", 0) == 0 and d.get("rating", "").upper() in ("BUY", "WATCH")}
+    held = {t: d for t, d in held_raw.items() if d.get("shares", 0) > 0}
+
+    # Fetch prices + 52w high for watchlist names
+    all_tickers = list(watchlist.keys())[:20]
+    price_data = get_live_prices(all_tickers) if all_tickers else {}
+
+    valuation_lines = []
+    for t in all_tickers:
+        try:
+            info = yf.Ticker(t).info
+            fwd_pe  = info.get("forwardPE") or 0
+            growth  = (info.get("revenueGrowth") or 0) * 100
+            high52  = info.get("fiftyTwoWeekHigh") or 0
+            price   = (price_data.get(t) or {}).get("price") or info.get("currentPrice") or 0
+            peg     = round(fwd_pe / growth, 2) if fwd_pe and growth > 0 else 0
+            off_high = round((price - high52) / high52 * 100, 1) if high52 and price else 0
+            name    = held_raw[t].get("name", t)
+            rating  = held_raw[t].get("rating", "")
+            thesis  = held_raw[t].get("thesis", "")[:120]
+            valuation_lines.append(
+                f"{t} ({name}) | Rating:{rating} | ${price:.0f} | {off_high:+.0f}% off 52wH ${high52:.0f} "
+                f"| fwdPE:{fwd_pe:.0f}x | rev growth:{growth:.0f}% | PEG:{peg:.1f} | Thesis: {thesis}"
+            )
+        except Exception:
+            valuation_lines.append(f"{t} — data unavailable")
+
+    # Sector rotation context
+    sector_lines = []
+    sector_etfs = {"XLK": "Tech", "SOXX": "Semis", "XLV": "Healthcare", "XLU": "Utilities",
+                   "XLE": "Energy", "XLF": "Financials", "XLI": "Industrials"}
+    try:
+        prices_5d = get_live_prices(list(sector_etfs.keys()))
+        for etf, label in sector_etfs.items():
+            chg = (prices_5d.get(etf) or {}).get("change_pct") or 0
+            sector_lines.append(f"{label}: {chg:+.1f}%")
+    except Exception:
+        pass
+
+    held_lines = [
+        f"{t} ({d.get('name',t)}): avg cost ${d.get('avg_cost',0):.0f}, {d.get('weight_pct',0):.1f}% of portfolio"
+        for t, d in held.items()
+    ]
+
+    prompt = (
+        "You are a senior portfolio manager giving entry point guidance.\n\n"
+        "SECTOR ROTATION (5-day):\n" + "\n".join(sector_lines) + "\n\n"
+        "WATCHLIST NAMES TO EVALUATE (price, % off 52w high, valuation, thesis):\n"
+        + "\n".join(valuation_lines) + "\n\n"
+        "HELD POSITIONS (for context on what could be trimmed to fund buys):\n"
+        + "\n".join(held_lines[:15]) + "\n\n"
+        "Produce a structured entry point report:\n\n"
+        "1. MACRO BACKDROP (3 sentences max — what the rotation means for timing)\n\n"
+        "2. TIER 1 — BUY NOW: names with best risk/reward right now. For each: current price, "
+        "% off high, valuation case, entry zone, why now.\n\n"
+        "3. TIER 2 — WAIT / SET LIMIT: names that need a pullback. For each: what price to wait for and why.\n\n"
+        "4. SKIP: names where valuation or momentum doesn't justify entry.\n\n"
+        "5. FUND IT: which held position to trim to free up capital, and why.\n\n"
+        "Use <b>bold</b> for ticker names. Be specific — give actual prices, not ranges. "
+        "Max 600 words total."
+    )
+
+    result = call_deepseek(prompt, max_tokens=900, temperature=0.3, timeout=60)
+    if not result or result.startswith("❌"):
+        return "❌ Entry point analysis failed — try again."
+    return "🎯 <b>Entry Point Analysis</b>\n\n" + result
+
+
 tools = [
     deep_dive,
     get_price,
@@ -1396,6 +1484,7 @@ tools = [
     get_quant_backtest,
     get_quant_paper,
     manage_quant_paper,
+    get_entry_points,
 ]
 
 if _MEMORY_BACKEND == "sqlite":
@@ -1484,6 +1573,10 @@ def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
             chat_id,
             show_buttons=False
         )
+
+    elif callback_data == "entry_points":
+        send_message("🎯 Analysing entry points across watchlist...", chat_id, show_buttons=False)
+        handle_message("entry points", chat_id)
 
     elif callback_data.startswith("shadow:"):
         ticker = callback_data.split(":", 1)[1]
