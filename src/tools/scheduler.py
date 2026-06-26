@@ -966,21 +966,29 @@ def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> N
         summary_text = parts[0].strip()
         details_text = parts[1].strip() if len(parts) > 1 else ""
 
+        import re
+
         # Parse per-ticker details and store globally
         global _shadow_ticker_detail
         _shadow_ticker_detail = {}
         if details_text:
-            import re
-            # Each block starts with "TICKER:" on its own line
-            blocks = re.split(r'\n([A-Z]{2,6}):\n', details_text)
-            # blocks = [pre, ticker1, detail1, ticker2, detail2, ...]
+            # Split on lines that are just "TICKER:" (with optional leading newline)
+            blocks = re.split(r'(?:^|\n)([A-Z]{1,6}):\n', details_text)
             for i in range(1, len(blocks) - 1, 2):
                 ticker = blocks[i].strip()
                 detail = blocks[i + 1].strip()
                 _shadow_ticker_detail[ticker] = detail
 
-        # Build inline keyboard — one button per ticker, 3 per row
-        tickers = list(_shadow_ticker_detail.keys())
+        # Extract ALL tickers mentioned in the summary (from <b>TICKER</b> tags)
+        # so every ticker in the message gets a button, even if detail parsing missed it
+        mentioned = re.findall(r'<b>([A-Z]{1,6})</b>', summary_text)
+        # Deduplicate while preserving order
+        seen = set()
+        tickers = []
+        for t in mentioned:
+            if t not in seen:
+                seen.add(t)
+                tickers.append(t)
         rows = []
         for i in range(0, len(tickers), 3):
             rows.append([
