@@ -1502,41 +1502,86 @@ def send_market_open_alert(market: str):
                         msg += f"  {emoji} <b>{ticker}</b> ({name}) · cost P&L {pnl:+.1f}%\n"
 
         else:
-            # US open: pre-market movers first, then earnings, then news
-            pos_lines = _build_position_lines(mkt_tickers)
-            if pre_market_available:
-                msg += f"<b>📊 Pre-Market Movers</b> <i>(vs prev close)</i>\n"
-            else:
-                msg += f"<b>📊 Your US Positions</b> <i>(last close · pre-mkt data unavailable)</i>\n"
-            if pos_lines:
-                msg += "\n".join(pos_lines) + "\n"
-            else:
-                msg += "<i>No price data available yet</i>\n"
+            # ── US open: macro snapshot → earnings → news → positions ──────────
+            us_macro = {"NQ=F": "Nasdaq Fut", "ES=F": "S&P Fut", "^VIX": "VIX", "GC=F": "Gold", "CL=F": "WTI Oil"}
+            us_macro_prices = get_live_prices(list(us_macro.keys()))
+            macro_lines = []
+            for sym, label in us_macro.items():
+                p = us_macro_prices.get(sym, {})
+                price = p.get("price")
+                chg   = p.get("change_pct")
+                if price and chg is not None:
+                    arrow = "▲" if chg > 0 else "▼"
+                    macro_lines.append(f"  {arrow} {label}: {chg:+.1f}%")
+            if macro_lines:
+                msg += f"<b>🌐 Pre-Market Macro</b>\n" + "\n".join(macro_lines) + "\n"
 
+            # Earnings today
             if earnings_today:
                 msg += f"\n<b>📅 Reporting Today</b>\n"
                 for item in earnings_today[:6]:
                     msg += f"• {item}\n"
             else:
-                msg += f"\n<b>📅 Reporting Today</b>\n<i>No earnings from your watchlist today</i>\n"
+                msg += f"\n<b>📅 Reporting Today</b>\n<i>Nothing from your watchlist today</i>\n"
 
-            if econ_events:
-                msg += f"\n<b>📋 Economic Events Today</b>\n"
-                for item in econ_events:
-                    title = item.get("title", "")[:90]
-                    snip = fmt_snippet(item.get("content", ""), 120)
-                    msg += f"• {title}\n"
-                    if snip:
-                        msg += f"  <i>{snip}</i>\n"
+            # News — US-specific, no junk, clean snippets only
+            us_news = []
+            try:
+                today_str = datetime.now().strftime("%B %d %Y")
+                news_results = tavily_search(
+                    f"US stock market pre-market news earnings {today_str}",
+                    max_results=10, search_depth="basic"
+                )
+                _skip_domains = (
+                    "youtube.com", "ubs.com", "morganstanley.com", "goldmansachs.com",
+                    "jpmorgan.com", "blackrock.com", "fidelity.com", "schwab.com",
+                    "vanguard.com", "philadelphiafed.org", "federalreserve.gov", "bea.gov",
+                    "investing.com", "tradingview.com", "barchart.com", "seekingalpha.com",
+                    "tradingeconomics.com", "macrotrends.net", "wisesheets.io",
+                )
+                _skip_titles = (
+                    "what to look out for", "survey of professional", "market briefing",
+                    "equity market commentary", "house view", "pre-market briefing",
+                    "alpha signal monitor", "daily market briefing", "weekly outlook",
+                    "morning note", "daily note", "stock market news for",
+                    "indexes start month", "markets news, june",
+                )
+                from datetime import timedelta
+                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+                for r in news_results:
+                    url   = r.get("url", "").lower()
+                    title = r.get("title", "").lower()
+                    pub   = (r.get("published_date") or "")[:10]
+                    if any(d in url for d in _skip_domains):
+                        continue
+                    if any(t in title for t in _skip_titles):
+                        continue
+                    if pub and pub < yesterday:
+                        continue
+                    snippet = _clean_snippet(r.get("content", ""))
+                    if not snippet:
+                        continue
+                    us_news.append({"title": r.get("title", "")[:80].strip(), "snippet": snippet})
+                    if len(us_news) == 4:
+                        break
+            except Exception:
+                pass
 
-            if market_news:
-                msg += f"\n<b>📰 Market News</b>\n"
-                for item in market_news:
-                    title = item.get("title", "")[:80].strip()
-                    snippet = _clean_snippet(item.get("content", ""))
-                    msg += f"• {title}\n"
-                    if snippet:
-                        msg += f"  <i>{snippet}</i>\n"
+            if us_news:
+                msg += f"\n<b>📰 Pre-Market News</b>\n"
+                for item in us_news:
+                    msg += f"• {item['title']}\n  <i>{item['snippet']}</i>\n"
+
+            # US positions — pre-market movers if available, else last close
+            if pre_market_available:
+                msg += f"\n<b>📊 Pre-Market Movers</b> <i>(vs prev close)</i>\n"
+            else:
+                msg += f"\n<b>📊 Your US Positions</b> <i>(last close)</i>\n"
+            pos_lines = _build_position_lines(mkt_tickers)
+            if pos_lines:
+                msg += "\n".join(pos_lines) + "\n"
+            else:
+                msg += "<i>No price data available</i>\n"
 
         send_telegram(msg)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} open alert sent.")
