@@ -1836,22 +1836,12 @@ def handle_message(text: str, chat_id: str):
 
     except Exception as e:
         err = str(e)
-        # Corrupted checkpointer state — tool_call with no ToolMessage response.
-        # Reset this thread's memory and retry once with a clean slate.
+        # Corrupted checkpointer state — retry with a fresh thread_id to bypass broken history
         if "ToolMessage" in err or "tool_calls" in err:
-            try:
-                memory.put(
-                    {"configurable": {"thread_id": chat_id}},
-                    checkpoint={"v": 1, "ts": "", "id": "", "channel_values": {}, "channel_versions": {}, "versions_seen": {}, "pending_sends": []},
-                    metadata={},
-                    new_versions={},
-                )
-            except Exception:
-                pass
             try:
                 result = agent.invoke(
                     {"messages": [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=text)]},
-                    config={"configurable": {"thread_id": chat_id}}
+                    config={"configurable": {"thread_id": f"{chat_id}_fresh"}}
                 )
                 response = result["messages"][-1].content
                 extract_ticker(response, chat_id)
