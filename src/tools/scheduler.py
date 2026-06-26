@@ -973,13 +973,12 @@ def send_market_close_alert(market: str):
         # Determine which tickers to include based on market
         held = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
 
-        if market == "HK":
-            tickers = [t for t in held if t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ")]
-        elif market == "EU":
+        if market == "EU":
             eu_names = ["ASML"]  # expand as needed
             tickers = [t for t in held if t in eu_names]
-        else:  # US (default)
-            tickers = [t for t in held if not any(t.endswith(s) for s in [".HK", ".SS", ".SZ", ".TW"])]
+        else:
+            # US and HK close both show full portfolio — HK session is context for entire book
+            tickers = [t for t in held if not any(t.endswith(s) for s in [".SS", ".SZ", ".TW"])]
 
         if not tickers:
             print(f"No held positions for {market} close.")
@@ -1043,8 +1042,9 @@ def send_market_close_alert(market: str):
         except Exception as e:
             print(f"Synthesis error: {e}")
 
+        flag = {"HK": "🇭🇰", "EU": "🇪🇺", "US": "🇺🇸"}.get(market, "")
         msg = (
-            f"🔔 <b>{market} Close — Portfolio Summary</b>\n"
+            f"🔔 {flag} <b>{market} Close — Portfolio Summary</b>\n"
             f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n"
             f"<i>{total_winners} up · {total_losers} down</i>\n\n"
             + "\n".join(cat_blocks)
