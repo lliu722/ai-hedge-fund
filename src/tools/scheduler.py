@@ -1239,9 +1239,7 @@ def send_market_open_alert(market: str):
 
         # ── Segment tickers by market ──────────────────────────────────────────
         if market == "HK":
-            hk_tickers = [t for t in held if t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ")]
-            # Fall back to all held positions — most users hold US stocks that react to Asian session
-            mkt_tickers = hk_tickers if hk_tickers else list(held.keys())
+            mkt_tickers = [t for t in held if t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ")]
             mkt_label = "🇭🇰 HK Open"
             mkt_time  = "9:30am HKT"
         else:  # US
@@ -1249,9 +1247,7 @@ def send_market_open_alert(market: str):
             mkt_label = "🇺🇸 US Open"
             mkt_time  = "9:30am ET"
 
-        if not mkt_tickers:
-            print(f"No held positions for {market} open alert.")
-            return
+        no_positions = not mkt_tickers
 
         # ── Parallel fetches ───────────────────────────────────────────────────
         def fetch_pre_market_moves():
@@ -1393,15 +1389,17 @@ def send_market_open_alert(market: str):
         msg = f"🔔 <b>{mkt_label}</b> — {mkt_time}\n<i>{now_str} HKT</i>\n\n"
 
         # Section 1: positions
-        if market == "US" and pre_market_available:
+        if no_positions:
+            pass  # skip portfolio section — no HK/US positions held
+        elif market == "US" and pre_market_available:
             msg += f"<b>📊 Pre-Market Movers</b> <i>(vs prev close)</i>\n"
         elif market == "US":
             msg += f"<b>📊 Your US Positions</b> <i>(last close · pre-mkt data unavailable)</i>\n"
         else:
-            msg += f"<b>📊 Your Portfolio</b> <i>(last close · Asia session)</i>\n"
+            msg += f"<b>📊 Your HK Positions</b> <i>(last close)</i>\n"
 
         position_lines = []
-        for ticker in mkt_tickers:
+        for ticker in (mkt_tickers if not no_positions else []):
             d = held.get(ticker, {})
             avg_cost = d.get("avg_cost", 0)
 
@@ -1461,7 +1459,17 @@ def send_market_open_alert(market: str):
             for item in market_news:
                 title = item.get("title", "")[:80].strip()
                 content = item.get("content", "").strip()
-                snippet = content[:130] if len(content) > 40 and not content.startswith("[") else ""
+                # Strip lines that are navigation menus, markdown links, or too short
+                clean_lines = [
+                    ln.strip() for ln in content.splitlines()
+                    if ln.strip()
+                    and not ln.strip().startswith("[")
+                    and not ln.strip().startswith("*")
+                    and not ln.strip().startswith("#")
+                    and not ln.strip().startswith("http")
+                    and len(ln.strip()) > 40
+                ]
+                snippet = clean_lines[0][:140] if clean_lines else ""
                 msg += f"• {title}\n"
                 if snippet:
                     msg += f"  <i>{snippet}</i>\n"

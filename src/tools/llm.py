@@ -99,6 +99,15 @@ def clean_news(results: list, min_content: int = 60) -> list:
 def fmt_snippet(content: str, max_len: int = 150) -> str:
     """Return a clean display snippet from Tavily content, or empty string if useless."""
     c = content.strip() if content else ""
-    if not c or len(c) < 40 or c.startswith("[") or c.startswith("]("):
+    if not c:
         return ""
-    return c[:max_len]
+    # Walk lines until we find one that is actual prose (not nav/links/headers)
+    for line in c.splitlines():
+        ln = line.strip()
+        if (len(ln) > 40
+                and not ln.startswith("[")
+                and not ln.startswith("*")
+                and not ln.startswith("#")
+                and not ln.startswith("http")):
+            return ln[:max_len]
+    return ""
