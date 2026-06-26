@@ -1239,7 +1239,7 @@ def send_market_open_alert(market: str):
 
         # ── Segment tickers by market ──────────────────────────────────────────
         if market == "HK":
-            mkt_tickers = [t for t in held if t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ")]
+            mkt_tickers = list(held.keys())  # all held — shown at bottom for context
             mkt_label = "🇭🇰 HK Open"
             mkt_time  = "9:30am HKT"
         else:  # US
@@ -1247,7 +1247,9 @@ def send_market_open_alert(market: str):
             mkt_label = "🇺🇸 US Open"
             mkt_time  = "9:30am ET"
 
-        no_positions = not mkt_tickers
+        if not mkt_tickers:
+            print(f"No held positions for {market} open alert.")
+            return
 
         # ── Parallel fetches ───────────────────────────────────────────────────
         def fetch_pre_market_moves():
@@ -1388,91 +1390,102 @@ def send_market_open_alert(market: str):
         now_str = datetime.now().strftime("%d %b %Y, %H:%M")
         msg = f"🔔 <b>{mkt_label}</b> — {mkt_time}\n<i>{now_str} HKT</i>\n\n"
 
-        # Section 1: positions
-        if no_positions:
-            pass  # skip portfolio section — no HK/US positions held
-        elif market == "US" and pre_market_available:
-            msg += f"<b>📊 Pre-Market Movers</b> <i>(vs prev close)</i>\n"
-        elif market == "US":
-            msg += f"<b>📊 Your US Positions</b> <i>(last close · pre-mkt data unavailable)</i>\n"
-        else:
-            msg += f"<b>📊 Your HK Positions</b> <i>(last close)</i>\n"
+        def _clean_snippet(content: str, max_len: int = 140) -> str:
+            for ln in content.splitlines():
+                s = ln.strip()
+                if len(s) > 40 and not s.startswith(("[", "*", "#", "http")):
+                    return s[:max_len]
+            return ""
 
-        position_lines = []
-        for ticker in (mkt_tickers if not no_positions else []):
-            d = held.get(ticker, {})
-            avg_cost = d.get("avg_cost", 0)
+        def _build_position_lines(tickers, limit=12):
+            lines = []
+            for ticker in tickers:
+                d = held.get(ticker, {})
+                avg_cost = d.get("avg_cost", 0)
+                if market == "US" and ticker in pre_moves:
+                    pm = pre_moves[ticker]
+                    pct = pm["pre_pct"]
+                    icon = "▲" if pct > 0 else "▼"
+                    emoji = "🟢" if pct > 0 else "🔴"
+                    line = f"{emoji} <b>{ticker}</b> {icon}{abs(pct):.1f}% pre-mkt (${pm['pre_price']:.2f})"
+                    if abs(pct) >= 3.0 and pm["pre_price"] > 0:
+                        sh5  = int(5000  / pm["pre_price"])
+                        sh10 = int(10000 / pm["pre_price"])
+                        action = "add" if pct < 0 else "trim"
+                        line += f"\n  💡 {action}: $5k={sh5}sh · $10k={sh10}sh"
+                    lines.append((abs(pct), line))
+                else:
+                    p = prices.get(ticker, {})
+                    price = p.get("price")
+                    if price and avg_cost:
+                        pnl = (price - avg_cost) / avg_cost * 100
+                        emoji = "🟢" if pnl > 0 else "🔴"
+                        lines.append((0, f"{emoji} <b>{ticker}</b> ${price:.2f} · cost P&L {pnl:+.1f}%"))
+                    elif price:
+                        lines.append((0, f"⚪ <b>{ticker}</b> ${price:.2f}"))
+            lines.sort(key=lambda x: x[0], reverse=True)
+            return [line for _, line in lines[:limit]]
 
-            if market == "US" and ticker in pre_moves:
-                # Real pre-market data
-                pm = pre_moves[ticker]
-                pct = pm["pre_pct"]
-                icon = "▲" if pct > 0 else "▼"
-                emoji = "🟢" if pct > 0 else "🔴"
-                line = f"{emoji} <b>{ticker}</b> {icon}{abs(pct):.1f}% pre-mkt (${pm['pre_price']:.2f})"
-                if abs(pct) >= 3.0 and pm["pre_price"] > 0:
-                    sh5  = int(5000  / pm["pre_price"])
-                    sh10 = int(10000 / pm["pre_price"])
-                    action = "add" if pct < 0 else "trim"
-                    line += f"\n  💡 {action}: $5k={sh5}sh · $10k={sh10}sh"
-                position_lines.append((abs(pct), line))
+        if market == "HK":
+            # HK open: macro first, portfolio at the bottom for context
+            if market_news:
+                msg += f"<b>🌙 Overnight News</b>\n"
+                for item in market_news:
+                    title = item.get("title", "")[:80].strip()
+                    snippet = _clean_snippet(item.get("content", ""))
+                    msg += f"• {title}\n"
+                    if snippet:
+                        msg += f"  <i>{snippet}</i>\n"
+
+            if earnings_today:
+                msg += f"\n<b>📅 Reporting Today</b>\n"
+                for item in earnings_today[:6]:
+                    msg += f"• {item}\n"
             else:
-                # Last close — show price + cost P&L only, NO session % (would be misleading)
-                p = prices.get(ticker, {})
-                price = p.get("price")
-                if price and avg_cost:
-                    pnl = (price - avg_cost) / avg_cost * 100
-                    emoji = "🟢" if pnl > 0 else "🔴"
-                    position_lines.append((0, f"{emoji} <b>{ticker}</b> ${price:.2f} · cost P&L {pnl:+.1f}%"))
-                elif price:
-                    position_lines.append((0, f"⚪ <b>{ticker}</b> ${price:.2f}"))
+                msg += f"\n<b>📅 Reporting Today</b>\n<i>No earnings from your watchlist today</i>\n"
 
-        # Sort: pre-market movers first (by abs move), then rest alphabetically
-        position_lines.sort(key=lambda x: x[0], reverse=True)
-        if position_lines:
-            msg += "\n".join(line for _, line in position_lines[:12]) + "\n"
+            # Portfolio at the bottom — last close prices for context
+            pos_lines = _build_position_lines(mkt_tickers)
+            if pos_lines:
+                msg += f"\n<b>📊 Your Portfolio</b> <i>(last close)</i>\n"
+                msg += "\n".join(pos_lines) + "\n"
+
         else:
-            msg += "<i>No price data available yet</i>\n"
+            # US open: pre-market movers first, then earnings, then news
+            pos_lines = _build_position_lines(mkt_tickers)
+            if pre_market_available:
+                msg += f"<b>📊 Pre-Market Movers</b> <i>(vs prev close)</i>\n"
+            else:
+                msg += f"<b>📊 Your US Positions</b> <i>(last close · pre-mkt data unavailable)</i>\n"
+            if pos_lines:
+                msg += "\n".join(pos_lines) + "\n"
+            else:
+                msg += "<i>No price data available yet</i>\n"
 
-        # Section 2: earnings today — from our own calendar, not Tavily
-        if earnings_today:
-            msg += f"\n<b>📅 Reporting Today</b>\n"
-            for item in earnings_today[:6]:
-                msg += f"• {item}\n"
-        else:
-            msg += f"\n<b>📅 Reporting Today</b>\n<i>No earnings from your watchlist today</i>\n"
+            if earnings_today:
+                msg += f"\n<b>📅 Reporting Today</b>\n"
+                for item in earnings_today[:6]:
+                    msg += f"• {item}\n"
+            else:
+                msg += f"\n<b>📅 Reporting Today</b>\n<i>No earnings from your watchlist today</i>\n"
 
-        # Section 3: economic events — only if actual content found
-        if econ_events:
-            msg += f"\n<b>📋 Economic Events Today</b>\n"
-            for item in econ_events:
-                title = item.get("title", "")[:90]
-                snip = fmt_snippet(item.get("content", ""), 120)
-                msg += f"• {title}\n"
-                if snip:
-                    msg += f"  <i>{snip}</i>\n"
+            if econ_events:
+                msg += f"\n<b>📋 Economic Events Today</b>\n"
+                for item in econ_events:
+                    title = item.get("title", "")[:90]
+                    snip = fmt_snippet(item.get("content", ""), 120)
+                    msg += f"• {title}\n"
+                    if snip:
+                        msg += f"  <i>{snip}</i>\n"
 
-        # Section 4: actual market news — only show if something useful passed the filter
-        if market_news:
-            label = "🌙 Overnight News" if market == "HK" else "📰 Market News"
-            msg += f"\n<b>{label}</b>\n"
-            for item in market_news:
-                title = item.get("title", "")[:80].strip()
-                content = item.get("content", "").strip()
-                # Strip lines that are navigation menus, markdown links, or too short
-                clean_lines = [
-                    ln.strip() for ln in content.splitlines()
-                    if ln.strip()
-                    and not ln.strip().startswith("[")
-                    and not ln.strip().startswith("*")
-                    and not ln.strip().startswith("#")
-                    and not ln.strip().startswith("http")
-                    and len(ln.strip()) > 40
-                ]
-                snippet = clean_lines[0][:140] if clean_lines else ""
-                msg += f"• {title}\n"
-                if snippet:
-                    msg += f"  <i>{snippet}</i>\n"
+            if market_news:
+                msg += f"\n<b>📰 Market News</b>\n"
+                for item in market_news:
+                    title = item.get("title", "")[:80].strip()
+                    snippet = _clean_snippet(item.get("content", ""))
+                    msg += f"• {title}\n"
+                    if snippet:
+                        msg += f"  <i>{snippet}</i>\n"
 
         send_telegram(msg)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} open alert sent.")
