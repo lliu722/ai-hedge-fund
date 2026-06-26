@@ -963,22 +963,97 @@ def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> s
 
 # ── Market Close Alerts ───────────────────────────────────────────────────────
 
+
+# ── Market config — one entry per market, drives both open and close ──────────
+
+_MARKET_CFG = {
+    "US": {
+        "flag":        "🇺🇸",
+        "open_time":   "9:30am ET",
+        "open_macro":  {"NQ=F": "Nasdaq Fut", "ES=F": "S&P Fut", "^VIX": "VIX", "GC=F": "Gold", "CL=F": "WTI Oil"},
+        "news_query":  "US stock market pre-market earnings {date}",
+        "news_label":  "📰 Pre-Market News",
+        # Tickers included at OPEN (pre-market movers)
+        "open_filter": lambda t: not any(t.endswith(s) for s in [".HK", ".SS", ".SZ", ".TW"]),
+        # Tickers included at CLOSE (portfolio summary)
+        "close_filter": lambda t: not any(t.endswith(s) for s in [".HK", ".SS", ".SZ", ".TW"]),
+    },
+    "HK": {
+        "flag":        "🇭🇰",
+        "open_time":   "9:30am HKT",
+        "open_macro":  {"^HSI": "Hang Seng", "NQ=F": "Nasdaq Fut", "USDCNH=X": "USD/CNH", "GC=F": "Gold"},
+        "news_query":  "Hong Kong stock market Hang Seng China Asia {date}",
+        "news_label":  "🌏 Asia News",
+        "open_filter": lambda t: t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ"),
+        "close_filter": lambda t: t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ"),
+    },
+    "EU": {
+        "flag":        "🇪🇺",
+        "open_time":   "9:00am CET",
+        "open_macro":  {"^STOXX50E": "Euro Stoxx 50", "EURUSD=X": "EUR/USD", "GC=F": "Gold"},
+        "news_query":  "European stock market DAX FTSE earnings {date}",
+        "news_label":  "🌍 European News",
+        "open_filter": lambda t: t in {"ASML"},
+        "close_filter": lambda t: t in {"ASML"},
+    },
+}
+
+_JUNK_DOMAINS = (
+    "youtube.com", "ubs.com", "morganstanley.com", "goldmansachs.com",
+    "jpmorgan.com", "blackrock.com", "fidelity.com", "schwab.com",
+    "vanguard.com", "philadelphiafed.org", "federalreserve.gov", "bea.gov",
+    "investing.com", "tradingview.com", "barchart.com", "seekingalpha.com",
+    "tradingeconomics.com", "macrotrends.net", "wisesheets.io",
+)
+_JUNK_TITLES = (
+    "what to look out for", "survey of professional", "market briefing",
+    "equity market commentary", "house view", "pre-market briefing",
+    "alpha signal monitor", "daily market briefing", "weekly outlook",
+    "morning note", "daily note", "stock market news for",
+    "indexes start month", "markets news, june",
+)
+
+
+def _fetch_market_news(query: str, label: str) -> str:
+    """Fetch news for a market, filter junk, return formatted HTML block or empty string."""
+    from datetime import timedelta
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    try:
+        results = tavily_search(query, max_results=10, search_depth="basic")
+        items = []
+        for r in results:
+            url   = r.get("url", "").lower()
+            title = r.get("title", "").lower()
+            pub   = (r.get("published_date") or "")[:10]
+            if any(d in url for d in _JUNK_DOMAINS):
+                continue
+            if any(t in title for t in _JUNK_TITLES):
+                continue
+            if pub and pub < yesterday:
+                continue
+            snippet = fmt_snippet(r.get("content", ""), 140)
+            if not snippet:
+                continue
+            items.append(f"• {r.get('title','')[:80].strip()}\n  <i>{snippet}</i>")
+            if len(items) == 4:
+                break
+        if items:
+            return f"\n<b>{label}</b>\n" + "\n".join(items) + "\n"
+    except Exception:
+        pass
+    return ""
+
+
 def send_market_close_alert(market: str):
-    """Send end-of-day portfolio summary grouped by category for the closing market."""
+    """Theme-grouped portfolio close summary. Config-driven per market."""
     print(f"[{datetime.now().strftime('%H:%M')}] Market close alert: {market}")
     try:
         from src.tools.prices import get_live_prices
         from src.tools.notify import send_telegram
 
-        # Determine which tickers to include based on market
+        cfg  = _MARKET_CFG.get(market, _MARKET_CFG["US"])
         held = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
-
-        if market == "EU":
-            eu_names = ["ASML"]  # expand as needed
-            tickers = [t for t in held if t in eu_names]
-        else:
-            # US and HK close both show full portfolio — HK session is context for entire book
-            tickers = [t for t in held if not any(t.endswith(s) for s in [".SS", ".SZ", ".TW"])]
+        tickers = [t for t in held if cfg["close_filter"](t)]
 
         if not tickers:
             print(f"No held positions for {market} close.")
@@ -1042,9 +1117,8 @@ def send_market_close_alert(market: str):
         except Exception as e:
             print(f"Synthesis error: {e}")
 
-        flag = {"HK": "🇭🇰", "EU": "🇪🇺", "US": "🇺🇸"}.get(market, "")
         msg = (
-            f"🔔 {flag} <b>{market} Close — Portfolio Summary</b>\n"
+            f"🔔 {cfg['flag']} <b>{market} Close — Portfolio Summary</b>\n"
             f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n"
             f"<i>{total_winners} up · {total_losers} down</i>\n\n"
             + "\n".join(cat_blocks)
@@ -1222,39 +1296,20 @@ def check_alerts_report() -> str:
 # ── Market Open Alerts ────────────────────────────────────────────────────────
 
 def send_market_open_alert(market: str):
-    """
-    Fire just before market open with a tight, action-focused brief:
-    - Your held positions + pre-market % move (US) or prior-session move (HK)
-    - Today's earnings calls for names you hold or watch
-    - Economic calendar (Tavily) + overnight macro headline
-    No DeepSeek synthesis — raw data is faster and more useful at open time.
-    """
+    """Config-driven market open brief. Add a new market by adding an entry to _MARKET_CFG."""
     print(f"[{datetime.now().strftime('%H:%M')}] Market open alert: {market}")
     try:
         from src.tools.prices import get_live_prices, normalize_ticker
         from src.tools.notify import send_telegram
         import yfinance as yf
 
+        cfg  = _MARKET_CFG.get(market, _MARKET_CFG["US"])
         held = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
+        mkt_tickers = [t for t in held if cfg["open_filter"](t)]
 
-        # ── Segment tickers by market ──────────────────────────────────────────
-        if market == "HK":
-            mkt_tickers = [t for t in held if t.endswith(".HK") or t.endswith(".SS") or t.endswith(".SZ")]
-            mkt_label = "🇭🇰 HK Open"
-            mkt_time  = "9:30am HKT"
-        else:  # US
-            mkt_tickers = [t for t in held if not any(t.endswith(s) for s in [".HK", ".SS", ".SZ", ".TW"])]
-            mkt_label = "🇺🇸 US Open"
-            mkt_time  = "9:30am ET"
-
-        if not mkt_tickers and market == "US":
-            print(f"No held US positions for open alert.")
-            return
-
-        # ── Parallel fetches ───────────────────────────────────────────────────
-        def fetch_pre_market_moves():
-            """Pre-market price vs previous close for US tickers via yfinance fast_info.
-            Returns only tickers where pre_market_price is actually available."""
+        # ── Parallel data fetches ──────────────────────────────────────────────
+        def _pre_market_moves():
+            """US only — yfinance fast_info pre-market price."""
             moves = {}
             if market != "US":
                 return moves
@@ -1263,325 +1318,104 @@ def send_market_open_alert(market: str):
                     yfk = normalize_ticker(ticker)
                     if not yfk or yfk.startswith("CRYPTO:"):
                         continue
-                    fi = yf.Ticker(yfk).fast_info
+                    fi   = yf.Ticker(yfk).fast_info
                     pre  = getattr(fi, "pre_market_price", None)
                     prev = getattr(fi, "previous_close", None)
-                    # Only record if yfinance actually returned a pre-market price
                     if pre and prev and prev > 0 and pre != prev:
-                        pct = (pre - prev) / prev * 100
-                        moves[ticker] = {"pre_price": pre, "prev_close": prev, "pre_pct": pct}
+                        moves[ticker] = {"pre_price": pre, "prev_close": prev,
+                                         "pre_pct": (pre - prev) / prev * 100}
                 except Exception:
                     pass
             return moves
 
-        def fetch_regular_prices():
-            return get_live_prices(mkt_tickers)
-
-        def fetch_earnings_today():
-            """Use earnings_calendar.py to get tickers reporting today — no Tavily."""
+        def _earnings_today():
             try:
                 from src.tools.earnings_calendar import get_earnings_dates
-                all_tickers = list(WATCHLIST_DATA.keys())
-                dates = get_earnings_dates(all_tickers)
+                dates = get_earnings_dates(list(WATCHLIST_DATA.keys()))
                 today = datetime.now().strftime("%Y-%m-%d")
-                reporting = []
+                out = []
                 for t, info in dates.items():
-                    d = info.get("date", "")
-                    when = info.get("when", "")
-                    if d and d.startswith(today):
-                        label = fmt(t)
-                        timing = f" ({when})" if when else ""
-                        reporting.append(f"{label}{timing}")
-                return reporting
-            except Exception as e:
-                print(f"[open_alert] earnings fetch error: {e}")
+                    if (info.get("date") or "").startswith(today):
+                        when = info.get("when", "")
+                        out.append(f"{fmt(t)}{(' (' + when + ')') if when else ''}")
+                return out
+            except Exception:
                 return []
 
-        def fetch_market_news():
-            """News for held names — company-specific queries, today only."""
-            today_str   = datetime.now().strftime("%B %d %Y")
-            # Use tickers not company names — more targeted results
-            top_tickers = " ".join(list(held.keys())[:8])
-            if market == "HK":
-                query = f"{top_tickers} earnings results Asia markets {today_str}"
-            else:
-                query = f"{top_tickers} stock news earnings analyst {today_str}"
-
-            results = tavily_search(query, max_results=10, search_depth="basic")
-
-            # Domains that are paywalled, stale aggregators, or generic calendars
-            _bad_domains = (
-                "ubs.com", "morganstanley.com", "goldmansachs.com", "jpmorgan.com",
-                "blackrock.com", "fidelity.com", "schwab.com", "vanguard.com",
-                "philadelphiafed.org", "federalreserve.gov", "bea.gov",
-                "investing.com", "tradingview.com", "barchart.com",
-                "tradingeconomics.com", "macrotrends.net", "wisesheets.io",
-                "stockanalysis.com/news", "seekingalpha.com",
-            )
-            _bad_titles = (
-                "what to look out for", "economic data this week", "survey of professional",
-                "market briefing", "equity market commentary", "house view",
-                "pre-market briefing", "alpha signal monitor", "daily market briefing",
-                "weekly outlook", "morning note", "daily note",
-                "stock market news for", "indexes start month", "markets news, june 1",
-            )
-
-            # Only keep today's or yesterday's articles — block old dates surfacing
-            from datetime import timedelta
-            yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-            today_iso = datetime.now().strftime("%Y-%m-%d")
-
-            filtered = []
-            for r in results:
-                url   = r.get("url", "").lower()
-                title = r.get("title", "").lower()
-                pub   = (r.get("published_date") or "")[:10]  # YYYY-MM-DD
-                content = r.get("content", "")
-
-                if any(d in url for d in _bad_domains):
-                    continue
-                if any(t in title for t in _bad_titles):
-                    continue
-                if len(content) < 80:
-                    continue
-                # If article has a date and it's older than yesterday, skip
-                if pub and pub < yesterday:
-                    continue
-
-                filtered.append(r)
-                if len(filtered) == 4:
-                    break
-
-            return filtered
-
-        def fetch_economic_events():
-            """Specific economic events due today — date-anchored query."""
-            if market == "HK":
-                return []  # HK open is 9:20am — econ data rarely at that time
-            today_str = datetime.now().strftime("%B %d %Y")
-            results = tavily_search(
-                f"US economic data release {today_str} CPI jobs GDP Fed",
-                max_results=4, search_depth="basic"
-            )
-            junk_keywords = ("calendar", "schedule", "indicator release", "release schedule",
-                             "bureau of economic", "guggenheim", "bea.gov")
-            return [
-                r for r in results
-                if not any(k in r.get("title", "").lower() for k in junk_keywords)
-                and len(r.get("content", "")) > 100  # must have actual content
-            ][:3]
-
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            f_pre    = ex.submit(fetch_pre_market_moves)
-            f_prices = ex.submit(fetch_regular_prices)
-            f_earn   = ex.submit(fetch_earnings_today)
-            f_news   = ex.submit(fetch_market_news)
-            f_econ   = ex.submit(fetch_economic_events)
-
-            pre_moves = f_pre.result(timeout=20)
-            prices    = f_prices.result(timeout=20)
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            f_pre    = ex.submit(_pre_market_moves)
+            f_prices = ex.submit(get_live_prices, mkt_tickers)
+            f_macro  = ex.submit(get_live_prices, list(cfg["open_macro"].keys()))
+            f_earn   = ex.submit(_earnings_today)
+            pre_moves      = f_pre.result(timeout=20)
+            prices         = f_prices.result(timeout=20)
+            macro_prices   = f_macro.result(timeout=15)
             earnings_today = f_earn.result(timeout=15)
-            market_news    = f_news.result(timeout=15)
-            econ_events    = f_econ.result(timeout=15)
-
-        pre_market_available = len(pre_moves) > 0
 
         # ── Build message ──────────────────────────────────────────────────────
         now_str = datetime.now().strftime("%d %b %Y, %H:%M")
-        msg = f"🔔 <b>{mkt_label}</b> — {mkt_time}\n<i>{now_str} HKT</i>\n\n"
+        msg = f"🔔 {cfg['flag']} <b>{market} Open</b> — {cfg['open_time']}\n<i>{now_str} HKT</i>\n\n"
 
-        def _clean_snippet(content: str, max_len: int = 140) -> str:
-            for ln in content.splitlines():
-                s = ln.strip()
-                if len(s) > 40 and not s.startswith(("[", "*", "#", "http")):
-                    return s[:max_len]
-            return ""
+        # Section 1 — Macro snapshot
+        macro_lines = []
+        for sym, label in cfg["open_macro"].items():
+            p   = macro_prices.get(sym, {})
+            chg = p.get("change_pct")
+            if chg is not None:
+                arrow = "▲" if chg > 0 else "▼"
+                macro_lines.append(f"  {arrow} {label}: {chg:+.1f}%")
+        if macro_lines:
+            msg += f"<b>🌐 Macro</b>\n" + "\n".join(macro_lines) + "\n"
 
-        def _build_position_lines(tickers, limit=12):
-            lines = []
-            for ticker in tickers:
-                d = held.get(ticker, {})
-                avg_cost = d.get("avg_cost", 0)
-                if market == "US" and ticker in pre_moves:
-                    pm = pre_moves[ticker]
-                    pct = pm["pre_pct"]
-                    icon = "▲" if pct > 0 else "▼"
-                    emoji = "🟢" if pct > 0 else "🔴"
-                    line = f"{emoji} <b>{ticker}</b> {icon}{abs(pct):.1f}% pre-mkt (${pm['pre_price']:.2f})"
-                    if abs(pct) >= 3.0 and pm["pre_price"] > 0:
-                        sh5  = int(5000  / pm["pre_price"])
-                        sh10 = int(10000 / pm["pre_price"])
-                        action = "add" if pct < 0 else "trim"
-                        line += f"\n  💡 {action}: $5k={sh5}sh · $10k={sh10}sh"
-                    lines.append((abs(pct), line))
-                else:
-                    p = prices.get(ticker, {})
-                    price = p.get("price")
-                    if price and avg_cost:
-                        pnl = (price - avg_cost) / avg_cost * 100
-                        emoji = "🟢" if pnl > 0 else "🔴"
-                        lines.append((0, f"{emoji} <b>{ticker}</b> ${price:.2f} · cost P&L {pnl:+.1f}%"))
-                    elif price:
-                        lines.append((0, f"⚪ <b>{ticker}</b> ${price:.2f}"))
-            lines.sort(key=lambda x: x[0], reverse=True)
-            return [line for _, line in lines[:limit]]
-
-        if market == "HK":
-            # Macro snapshot — futures and FX relevant to HK open
-            macro_tickers = {"NQ=F": "Nasdaq Fut", "ES=F": "S&P Fut", "^HSI": "Hang Seng", "USDCNH=X": "USD/CNH", "GC=F": "Gold"}
-            macro_prices  = get_live_prices(list(macro_tickers.keys()))
-            macro_lines = []
-            for sym, label in macro_tickers.items():
-                p = macro_prices.get(sym, {})
-                price = p.get("price")
-                chg   = p.get("change_pct")
-                if price and chg is not None:
-                    arrow = "▲" if chg > 0 else "▼"
-                    macro_lines.append(f"  {arrow} {label}: {chg:+.1f}%")
-            if macro_lines:
-                msg += f"<b>🌐 Overnight Macro</b>\n" + "\n".join(macro_lines) + "\n"
-
-            # Earnings today
-            if earnings_today:
-                msg += f"\n<b>📅 Reporting Today</b>\n"
-                for item in earnings_today[:6]:
-                    msg += f"• {item}\n"
-            else:
-                msg += f"\n<b>📅 Reporting Today</b>\n<i>Nothing from your watchlist today</i>\n"
-
-            # HK news only — Asia-specific query, skip YouTube/generic
-            hk_news = []
-            try:
-                today_str = datetime.now().strftime("%B %d %Y")
-                hk_results = tavily_search(
-                    f"Hong Kong stock market Hang Seng China Asia {today_str}",
-                    max_results=8, search_depth="basic"
-                )
-                _skip_domains = ("youtube.com", "ubs.com", "morganstanley.com", "goldmansachs.com",
-                                 "jpmorgan.com", "blackrock.com", "investing.com", "tradingview.com",
-                                 "seekingalpha.com", "barchart.com")
-                from datetime import timedelta
-                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-                for r in hk_results:
-                    url   = r.get("url", "").lower()
-                    pub   = (r.get("published_date") or "")[:10]
-                    content = r.get("content", "")
-                    if any(d in url for d in _skip_domains):
-                        continue
-                    if pub and pub < yesterday:
-                        continue
-                    snippet = _clean_snippet(content)
-                    if not snippet:
-                        continue
-                    hk_news.append({"title": r.get("title", "")[:80].strip(), "snippet": snippet})
-                    if len(hk_news) == 3:
-                        break
-            except Exception:
-                pass
-
-            if hk_news:
-                msg += f"\n<b>🌏 Asia News</b>\n"
-                for item in hk_news:
-                    msg += f"• {item['title']}\n  <i>{item['snippet']}</i>\n"
-            else:
-                msg += f"\n<b>🌏 Asia News</b>\n<i>No HK/Asia headlines found</i>\n"
-
-            # HK positions — only if you hold .HK/.SS/.SZ names
-            if mkt_tickers:
-                hk_prices = get_live_prices(mkt_tickers)
-                msg += f"\n<b>🇭🇰 Your HK Positions</b>\n"
-                for ticker in mkt_tickers:
-                    d = held.get(ticker, {})
-                    avg_cost = d.get("avg_cost", 0)
-                    name = d.get("name", ticker)[:22]
-                    p = hk_prices.get(ticker, {})
-                    price = p.get("price")
-                    if price and avg_cost:
-                        pnl = (price - avg_cost) / avg_cost * 100
-                        emoji = "🟢" if pnl > 0 else "🔴"
-                        msg += f"  {emoji} <b>{ticker}</b> ({name}) · cost P&L {pnl:+.1f}%\n"
-
+        # Section 2 — Earnings today
+        msg += f"\n<b>📅 Reporting Today</b>\n"
+        if earnings_today:
+            for item in earnings_today[:6]:
+                msg += f"• {item}\n"
         else:
-            # ── US open: macro snapshot → earnings → news → positions ──────────
-            us_macro = {"NQ=F": "Nasdaq Fut", "ES=F": "S&P Fut", "^VIX": "VIX", "GC=F": "Gold", "CL=F": "WTI Oil"}
-            us_macro_prices = get_live_prices(list(us_macro.keys()))
-            macro_lines = []
-            for sym, label in us_macro.items():
-                p = us_macro_prices.get(sym, {})
-                price = p.get("price")
-                chg   = p.get("change_pct")
-                if price and chg is not None:
-                    arrow = "▲" if chg > 0 else "▼"
-                    macro_lines.append(f"  {arrow} {label}: {chg:+.1f}%")
-            if macro_lines:
-                msg += f"<b>🌐 Pre-Market Macro</b>\n" + "\n".join(macro_lines) + "\n"
+            msg += "<i>Nothing from your watchlist today</i>\n"
 
-            # Earnings today
-            if earnings_today:
-                msg += f"\n<b>📅 Reporting Today</b>\n"
-                for item in earnings_today[:6]:
-                    msg += f"• {item}\n"
-            else:
-                msg += f"\n<b>📅 Reporting Today</b>\n<i>Nothing from your watchlist today</i>\n"
+        # Section 3 — Market news (from config query, junk filtered)
+        today_str = datetime.now().strftime("%B %d %Y")
+        news_block = _fetch_market_news(cfg["news_query"].format(date=today_str), cfg["news_label"])
+        if news_block:
+            msg += news_block
 
-            # News — US-specific, no junk, clean snippets only
-            us_news = []
-            try:
-                today_str = datetime.now().strftime("%B %d %Y")
-                news_results = tavily_search(
-                    f"US stock market pre-market news earnings {today_str}",
-                    max_results=10, search_depth="basic"
-                )
-                _skip_domains = (
-                    "youtube.com", "ubs.com", "morganstanley.com", "goldmansachs.com",
-                    "jpmorgan.com", "blackrock.com", "fidelity.com", "schwab.com",
-                    "vanguard.com", "philadelphiafed.org", "federalreserve.gov", "bea.gov",
-                    "investing.com", "tradingview.com", "barchart.com", "seekingalpha.com",
-                    "tradingeconomics.com", "macrotrends.net", "wisesheets.io",
-                )
-                _skip_titles = (
-                    "what to look out for", "survey of professional", "market briefing",
-                    "equity market commentary", "house view", "pre-market briefing",
-                    "alpha signal monitor", "daily market briefing", "weekly outlook",
-                    "morning note", "daily note", "stock market news for",
-                    "indexes start month", "markets news, june",
-                )
-                from datetime import timedelta
-                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-                for r in news_results:
-                    url   = r.get("url", "").lower()
-                    title = r.get("title", "").lower()
-                    pub   = (r.get("published_date") or "")[:10]
-                    if any(d in url for d in _skip_domains):
-                        continue
-                    if any(t in title for t in _skip_titles):
-                        continue
-                    if pub and pub < yesterday:
-                        continue
-                    snippet = _clean_snippet(r.get("content", ""))
-                    if not snippet:
-                        continue
-                    us_news.append({"title": r.get("title", "")[:80].strip(), "snippet": snippet})
-                    if len(us_news) == 4:
-                        break
-            except Exception:
-                pass
-
-            if us_news:
-                msg += f"\n<b>📰 Pre-Market News</b>\n"
-                for item in us_news:
-                    msg += f"• {item['title']}\n  <i>{item['snippet']}</i>\n"
-
-            # US positions — pre-market movers if available, else last close
-            if pre_market_available:
+        # Section 4 — Positions (market-specific tickers only)
+        if mkt_tickers:
+            pre_available = bool(pre_moves)
+            if pre_available:
                 msg += f"\n<b>📊 Pre-Market Movers</b> <i>(vs prev close)</i>\n"
             else:
-                msg += f"\n<b>📊 Your US Positions</b> <i>(last close)</i>\n"
-            pos_lines = _build_position_lines(mkt_tickers)
-            if pos_lines:
-                msg += "\n".join(pos_lines) + "\n"
-            else:
-                msg += "<i>No price data available</i>\n"
+                msg += f"\n<b>📊 Your {market} Positions</b> <i>(last close)</i>\n"
+
+            pos_lines = []
+            for ticker in mkt_tickers:
+                d        = held.get(ticker, {})
+                avg_cost = d.get("avg_cost", 0)
+                if ticker in pre_moves:
+                    pm    = pre_moves[ticker]
+                    pct   = pm["pre_pct"]
+                    arrow = "▲" if pct > 0 else "▼"
+                    emoji = "🟢" if pct > 0 else "🔴"
+                    line  = f"{emoji} <b>{ticker}</b> {arrow}{abs(pct):.1f}% pre-mkt (${pm['pre_price']:.2f})"
+                    if abs(pct) >= 3.0:
+                        sh5  = int(5000  / pm["pre_price"])
+                        sh10 = int(10000 / pm["pre_price"])
+                        line += f"\n  💡 {'add' if pct < 0 else 'trim'}: $5k={sh5}sh · $10k={sh10}sh"
+                    pos_lines.append((abs(pct), line))
+                else:
+                    p     = prices.get(ticker, {})
+                    price = p.get("price")
+                    if price and avg_cost:
+                        pnl   = (price - avg_cost) / avg_cost * 100
+                        emoji = "🟢" if pnl > 0 else "🔴"
+                        pos_lines.append((0, f"{emoji} <b>{ticker}</b> ${price:.2f} · cost P&L {pnl:+.1f}%"))
+                    elif price:
+                        pos_lines.append((0, f"⚪ <b>{ticker}</b> ${price:.2f}"))
+
+            pos_lines.sort(key=lambda x: x[0], reverse=True)
+            msg += "\n".join(line for _, line in pos_lines[:15]) + "\n"
 
         send_telegram(msg)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} open alert sent.")
