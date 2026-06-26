@@ -1427,7 +1427,79 @@ def send_market_open_alert(market: str):
             return [line for _, line in lines[:limit]]
 
         if market == "HK":
-            # HK open: macro first, portfolio at the bottom for context
+            # ── Overnight index moves — proxy for theme direction ──────────────
+            THEME_INDICES = {
+                "AI Infrastructure":    ("QQQ", "NQ=F"),   # Nasdaq / Nasdaq futures
+                "Memory / Storage":     ("MU", "SOXX"),    # Micron as lead + semis
+                "Networking":           ("QQQ", "SOXX"),
+                "Energy / Power":       ("XLE", "NG=F"),
+                "Banks / Financials":   ("XLF", "JPM"),
+                "Space":                ("QQQ", None),
+                "Software / Data":      ("QQQ", "MSFT"),
+                "Defence / Industrials":("XLI", "LMT"),
+                "Quantum":              ("QQQ", None),
+            }
+            # Fetch overnight moves for key proxies
+            proxy_tickers = list({t for pair in THEME_INDICES.values() for t in pair if t})
+            proxy_prices  = get_live_prices(proxy_tickers)
+
+            def _overnight_move(t):
+                p = proxy_prices.get(t, {})
+                return p.get("change_pct") or 0.0
+
+            # Build theme groups from ALL held positions (using WATCHLIST_DATA themes)
+            from src.tools.themes import THESIS_MAP
+            theme_buckets: dict = {}
+            for ticker, d in held.items():
+                theme = THESIS_MAP.get(ticker, "Other")
+                theme_buckets.setdefault(theme, []).append(ticker)
+
+            # Sort themes: biggest overnight proxy move first
+            def _theme_proxy_move(theme):
+                pair = THEME_INDICES.get(theme, (None, None))
+                moves = [_overnight_move(t) for t in pair if t]
+                return abs(moves[0]) if moves else 0.0
+
+            sorted_themes = sorted(theme_buckets.keys(), key=_theme_proxy_move, reverse=True)
+
+            # Header count
+            all_held_tickers = list(held.keys())
+            all_prices = get_live_prices(all_held_tickers)
+            up   = sum(1 for t in all_held_tickers if (all_prices.get(t, {}).get("change_pct") or 0) > 0)
+            down = sum(1 for t in all_held_tickers if (all_prices.get(t, {}).get("change_pct") or 0) < 0)
+            msg += f"<i>{up} up · {down} down (prev close)</i>\n\n"
+
+            # Theme blocks
+            for theme in sorted_themes:
+                tickers = theme_buckets[theme]
+                pair = THEME_INDICES.get(theme, (None, None))
+                proxy_move = _overnight_move(pair[0]) if pair[0] else 0.0
+                proxy_lbl  = f" · {pair[0]} {proxy_move:+.1f}% overnight" if pair[0] and proxy_move != 0 else ""
+                theme_icon = "📈" if proxy_move >= 0 else "📉"
+                msg += f"{theme_icon} <b>{theme}</b>{proxy_lbl}\n"
+                for ticker in sorted(tickers):
+                    d = held.get(ticker, {})
+                    avg_cost = d.get("avg_cost", 0)
+                    name = d.get("name", ticker)[:22]
+                    p = all_prices.get(ticker, {})
+                    price = p.get("price")
+                    chg   = p.get("change_pct") or 0.0
+                    if price and avg_cost:
+                        pnl = (price - avg_cost) / avg_cost * 100
+                        arrow = "▲" if chg > 0 else "▼"
+                        msg += f"  {arrow} <b>{ticker}</b> ({name}): {chg:+.2f}% • P&L: {pnl:+.1f}%\n"
+                    elif price:
+                        msg += f"  ⚪ <b>{ticker}</b> ({name}): ${price:.2f}\n"
+                msg += "\n"
+
+            # Earnings today
+            if earnings_today:
+                msg += f"<b>📅 Reporting Today</b>\n"
+                for item in earnings_today[:6]:
+                    msg += f"• {item}\n"
+                msg += "\n"
+
+            # Overnight news — clean snippets only
             if market_news:
                 msg += f"<b>🌙 Overnight News</b>\n"
                 for item in market_news:
@@ -1437,18 +1509,12 @@ def send_market_open_alert(market: str):
                     if snippet:
                         msg += f"  <i>{snippet}</i>\n"
 
-            if earnings_today:
-                msg += f"\n<b>📅 Reporting Today</b>\n"
-                for item in earnings_today[:6]:
-                    msg += f"• {item}\n"
-            else:
-                msg += f"\n<b>📅 Reporting Today</b>\n<i>No earnings from your watchlist today</i>\n"
-
-            # Portfolio at the bottom — last close prices for context
-            pos_lines = _build_position_lines(mkt_tickers)
-            if pos_lines:
-                msg += f"\n<b>📊 Your Portfolio</b> <i>(last close)</i>\n"
-                msg += "\n".join(pos_lines) + "\n"
+            # HK positions only if any
+            if mkt_tickers:
+                hk_lines = _build_position_lines(mkt_tickers)
+                if hk_lines:
+                    msg += f"\n<b>🇭🇰 HK Positions</b>\n"
+                    msg += "\n".join(hk_lines) + "\n"
 
         else:
             # US open: pre-market movers first, then earnings, then news

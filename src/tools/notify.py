@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def send_telegram(message: str) -> bool:
-    """Send a message to your Telegram bot."""
+    """Send a message to your Telegram bot. Auto-splits at 4096 chars."""
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -15,22 +15,28 @@ def send_telegram(message: str) -> bool:
         return False
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML",
-    }
 
-    try:
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            return True
-        else:
-            print(f"Telegram error: {response.text}")
-            return False
-    except Exception as e:
-        print(f"Telegram exception: {e}")
-        return False
+    # Split into chunks of 4096 chars, breaking on newlines where possible
+    chunks = []
+    while len(message) > 4096:
+        split_at = message.rfind("\n", 0, 4096)
+        if split_at == -1:
+            split_at = 4096
+        chunks.append(message[:split_at])
+        message = message[split_at:].lstrip("\n")
+    chunks.append(message)
+
+    ok = True
+    for chunk in chunks:
+        try:
+            response = requests.post(url, json={"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"})
+            if response.status_code != 200:
+                print(f"Telegram error: {response.text}")
+                ok = False
+        except Exception as e:
+            print(f"Telegram exception: {e}")
+            ok = False
+    return ok
 
 def send_price_alert(ticker: str, price: float, change_pct: float) -> bool:
     """Send a price movement alert."""
