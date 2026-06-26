@@ -906,59 +906,98 @@ def _categorise(tickers: list) -> dict:
 
 # ── Post-Market Advice ────────────────────────────────────────────────────────
 
-def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> str:
+# Per-ticker shadow detail store — populated at close, retrieved on button tap
+_shadow_ticker_detail: dict = {}  # {ticker: detail_text}
+
+
+def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> None:
     """
-    AI Shadow Portfolio — three personas each give their post-close view.
-    Sent as a second message after the positions summary.
+    AI Shadow Portfolio — short verdict message with per-ticker buttons.
+    Tapping a ticker button returns the full breakdown for that name.
+    Sends directly via send_telegram_with_buttons (no return value).
     """
     try:
-        from src.tools.recommendations import CATHIE_WOOD, DRUCKENMILLER, DAMODARAN
-        from concurrent.futures import ThreadPoolExecutor
         from src.tools.llm import call_deepseek as _ds
+        from src.tools.notify import send_telegram_with_buttons
 
+        from src.tools.prices import get_live_prices
+        tickers = list(held.keys())
+        live = get_live_prices(tickers) if tickers else {}
         pnl_lines = []
         for t, d in held.items():
-            avg_cost = d.get("avg_cost", 0)
-            name = d.get("name", t)
-            if avg_cost:
-                pnl_lines.append(f"{t} ({name}): avg cost ${avg_cost:.2f}")
+            avg = d.get("avg_cost", 0)
+            if not avg:
+                continue
+            price = live.get(t, {}).get("price", 0) if isinstance(live.get(t), dict) else live.get(t, 0)
+            pnl_pct = ((price - avg) / avg * 100) if price else 0
+            pnl_lines.append(f"{t} ({d.get('name', t)}): avg cost ${avg:.2f}, P&L {pnl_pct:+.0f}%")
 
         context = (
-            f"TODAY'S {market} CLOSE — CATEGORY MOVES:\n"
-            + "\n".join(summary_lines)
-            + "\n\nPORTFOLIO POSITIONS:\n"
-            + "\n".join(pnl_lines[:20])
+            f"TODAY'S {market} CLOSE:\n" + "\n".join(summary_lines) +
+            "\n\nPORTFOLIO (ticker, avg cost, unrealised P&L):\n" + "\n".join(pnl_lines[:25])
         )
 
-        persona_prompt = (
-            lambda persona_system:
+        # Single call — structured short summary + per-ticker details
+        prompt = (
             context + "\n\n"
-            "Given today's close, what is your ONE specific action call on this portfolio? "
-            "Name the ticker. Say BUY / ADD / TRIM / HOLD. Give exactly 2 sentences of reasoning. "
-            "Be direct. No generic statements. Use <b>bold</b> for the ticker."
+            "You are a senior portfolio manager. Output TWO sections separated by ---DETAILS---\n\n"
+            "SECTION 1 — SHORT SUMMARY (this goes in the main message):\n"
+            "Format exactly like this (use <b>bold</b> for tickers):\n"
+            "✅ BUY NOW\n• <b>TICKER</b> $price — one-line reason\n\n"
+            "⏳ SET LIMITS\n• <b>TICKER</b> — limit $X, one-line reason\n\n"
+            "❌ SKIP\n• <b>TICKER</b> — one-line reason\n\n"
+            "💰 Fund it: [which position to trim and why, one line]\n\n"
+            "Max 3 tickers per section. Only include sections with actual recommendations.\n\n"
+            "---DETAILS---\n\n"
+            "SECTION 2 — PER-TICKER DETAIL (one block per ticker you mentioned above):\n"
+            "Format each block as:\n"
+            "TICKER:\n"
+            "Current price, % off high. Valuation snapshot (fwd P/E, growth, PEG if relevant). "
+            "Thesis in 2 sentences. Entry zone. Specific limit price. Risk to watch. Max 120 words per ticker.\n\n"
+            "Only include tickers you mentioned in Section 1."
         )
 
-        def _call_persona(system):
-            r = _ds(persona_prompt(system), system, max_tokens=120, temperature=0.4, timeout=25)
-            return r if r and not r.startswith("❌") else "No view."
+        raw = _ds(prompt, max_tokens=800, temperature=0.35, timeout=45)
+        if not raw or raw.startswith("❌"):
+            return
 
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            fc = ex.submit(_call_persona, CATHIE_WOOD)
-            fd = ex.submit(_call_persona, DRUCKENMILLER)
-            fv = ex.submit(_call_persona, DAMODARAN)
-            cathie = fc.result()
-            druck  = fd.result()
-            damo   = fv.result()
+        # Split into summary + details
+        parts = raw.split("---DETAILS---", 1)
+        summary_text = parts[0].strip()
+        details_text = parts[1].strip() if len(parts) > 1 else ""
 
-        return (
-            f"🧠 <b>AI Shadow Portfolio — {market} Close</b>\n\n"
-            f"<b>Cathie Wood</b>\n{cathie}\n\n"
-            f"<b>Druckenmiller</b>\n{druck}\n\n"
-            f"<b>Damodaran</b>\n{damo}"
-        )
+        # Parse per-ticker details and store globally
+        global _shadow_ticker_detail
+        _shadow_ticker_detail = {}
+        if details_text:
+            import re
+            # Each block starts with "TICKER:" on its own line
+            blocks = re.split(r'\n([A-Z]{2,6}):\n', details_text)
+            # blocks = [pre, ticker1, detail1, ticker2, detail2, ...]
+            for i in range(1, len(blocks) - 1, 2):
+                ticker = blocks[i].strip()
+                detail = blocks[i + 1].strip()
+                _shadow_ticker_detail[ticker] = detail
+
+        # Build inline keyboard — one button per ticker, 3 per row
+        tickers = list(_shadow_ticker_detail.keys())
+        rows = []
+        for i in range(0, len(tickers), 3):
+            rows.append([
+                {"text": t, "callback_data": f"shadow:{t}"}
+                for t in tickers[i:i+3]
+            ])
+
+        msg = f"🧠 <b>AI Shadow Portfolio — {market} Close</b>\n\n{summary_text}"
+        if rows:
+            msg += "\n\n<i>Tap a ticker for the full breakdown ↓</i>"
+            send_telegram_with_buttons(msg, rows)
+        else:
+            from src.tools.notify import send_telegram
+            send_telegram(msg)
+
     except Exception as e:
         print(f"Shadow portfolio error: {e}")
-    return ""
 
 
 # ── Market Close Alerts ───────────────────────────────────────────────────────
@@ -1127,10 +1166,8 @@ def send_market_close_alert(market: str):
 
         send_telegram(msg)
 
-        # Second message: AI Shadow Portfolio (all markets)
-        shadow = _shadow_portfolio_message(summary_lines, held, market)
-        if shadow:
-            send_telegram(shadow)
+        # Second message: AI Shadow Portfolio (sends itself with buttons)
+        _shadow_portfolio_message(summary_lines, held, market)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} close alert sent.")
 
     except Exception as e:

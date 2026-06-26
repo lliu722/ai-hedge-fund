@@ -1485,6 +1485,15 @@ def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
             show_buttons=False
         )
 
+    elif callback_data.startswith("shadow:"):
+        ticker = callback_data.split(":", 1)[1]
+        from src.tools.scheduler import _shadow_ticker_detail
+        detail = _shadow_ticker_detail.get(ticker)
+        if detail:
+            send_message(f"🧠 <b>{ticker} — Full Breakdown</b>\n\n{detail}", chat_id, show_buttons=False)
+        else:
+            send_message(f"No detail available for {ticker} — it may have expired.", chat_id, show_buttons=False)
+
     elif callback_data == "explain":
         last = _last_response.get(chat_id)
         if not last:
