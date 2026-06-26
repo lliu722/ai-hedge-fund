@@ -1835,7 +1835,32 @@ def handle_message(text: str, chat_id: str):
         send_message(response, chat_id)
 
     except Exception as e:
-        send_message(f"❌ Something went wrong: {str(e)[:200]}", chat_id)
+        err = str(e)
+        # Corrupted checkpointer state — tool_call with no ToolMessage response.
+        # Reset this thread's memory and retry once with a clean slate.
+        if "ToolMessage" in err or "tool_calls" in err:
+            try:
+                memory.put(
+                    {"configurable": {"thread_id": chat_id}},
+                    checkpoint={"v": 1, "ts": "", "id": "", "channel_values": {}, "channel_versions": {}, "versions_seen": {}, "pending_sends": []},
+                    metadata={},
+                    new_versions={},
+                )
+            except Exception:
+                pass
+            try:
+                result = agent.invoke(
+                    {"messages": [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=text)]},
+                    config={"configurable": {"thread_id": chat_id}}
+                )
+                response = result["messages"][-1].content
+                extract_ticker(response, chat_id)
+                _last_response[chat_id] = response
+                send_message(response, chat_id)
+            except Exception as e2:
+                send_message(f"❌ Something went wrong: {str(e2)[:200]}", chat_id)
+        else:
+            send_message(f"❌ Something went wrong: {err[:200]}", chat_id)
 
 
 # ── Bot Loop ──────────────────────────────────────────────────────────────────
