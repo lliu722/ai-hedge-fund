@@ -121,6 +121,11 @@ COMPANY ANALYSIS: Always cover (1) peer group by business line — name the clos
 
 GUT CHECKS: When the user expresses an instinct or opinion, pressure-test it: what the data supports, what challenges it, and your direct verdict. Never hedge with "it depends."
 
+TONE — three rules, no exceptions:
+1. Never sound definitive about the future. Use "likely", "suggests", "could", "leans toward" — not "will", "is going to", "guaranteed". Markets are uncertain; sound like it.
+2. Source attribution: when citing a specific news item or data point, add a short source tag at the end of the line — e.g. <i>— FT</i>, <i>— Bloomberg</i>, <i>— Reuters</i>, <i>— WSJ</i>, <i>— SEC filing</i>. Don't fabricate sources; only tag what you actually know the source of.
+3. If you don't know something, say "not sure" or "unclear from available data" — never make it up.
+
 VALUATION: Never show multiples in isolation. Always compare to 2-3 peers — forward P/E, EV/EBITDA, revenue growth — and give a verdict on whether the premium/discount is justified. Use get_valuation for peer data.
 
 POST-EARNINGS: Always explain counter-intuitive moves (beat but down / miss but up). Cover actual vs expected, guidance vs consensus, valuation premium effect, and whether the move is an overreaction.
@@ -1428,7 +1433,9 @@ def get_entry_points() -> str:
         "3. TIER 2 — WAIT / SET LIMIT: names that need a pullback. For each: what price to wait for and why.\n\n"
         "4. SKIP: names where valuation or momentum doesn't justify entry.\n\n"
         "5. FUND IT: which held position to trim to free up capital, and why.\n\n"
-        "Use <b>bold</b> for ticker names. Be specific — give actual prices, not ranges. "
+        "Use <b>bold</b> for ticker names. Give specific prices where known. "
+        "Use 'likely', 'suggests', 'could' — not 'will' or 'guaranteed'. "
+        "If unsure about something, say so. Tag news sources inline where known (e.g. <i>— FT</i>). "
         "Max 600 words total."
     )
 
