@@ -1532,7 +1532,6 @@ def handle_message(text: str, chat_id: str):
         if lowered in ("hk open", "us open", "market open", "hk open brief", "us open brief"):
             from src.tools.scheduler import send_market_open_alert
             market = "HK" if "hk" in lowered else "US"
-            send_message(f"⏳ Building {market} open brief...", chat_id, show_buttons=False)
             send_market_open_alert(market)
             return
 

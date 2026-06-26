@@ -1427,94 +1427,79 @@ def send_market_open_alert(market: str):
             return [line for _, line in lines[:limit]]
 
         if market == "HK":
-            # ── Overnight index moves — proxy for theme direction ──────────────
-            THEME_INDICES = {
-                "AI Infrastructure":    ("QQQ", "NQ=F"),   # Nasdaq / Nasdaq futures
-                "Memory / Storage":     ("MU", "SOXX"),    # Micron as lead + semis
-                "Networking":           ("QQQ", "SOXX"),
-                "Energy / Power":       ("XLE", "NG=F"),
-                "Banks / Financials":   ("XLF", "JPM"),
-                "Space":                ("QQQ", None),
-                "Software / Data":      ("QQQ", "MSFT"),
-                "Defence / Industrials":("XLI", "LMT"),
-                "Quantum":              ("QQQ", None),
-            }
-            # Fetch overnight moves for key proxies
-            proxy_tickers = list({t for pair in THEME_INDICES.values() for t in pair if t})
-            proxy_prices  = get_live_prices(proxy_tickers)
-
-            def _overnight_move(t):
-                p = proxy_prices.get(t, {})
-                return p.get("change_pct") or 0.0
-
-            # Build theme groups from ALL held positions (using WATCHLIST_DATA themes)
-            from src.tools.themes import THESIS_MAP
-            theme_buckets: dict = {}
-            for ticker, d in held.items():
-                theme = THESIS_MAP.get(ticker, "Other")
-                theme_buckets.setdefault(theme, []).append(ticker)
-
-            # Sort themes: biggest overnight proxy move first
-            def _theme_proxy_move(theme):
-                pair = THEME_INDICES.get(theme, (None, None))
-                moves = [_overnight_move(t) for t in pair if t]
-                return abs(moves[0]) if moves else 0.0
-
-            sorted_themes = sorted(theme_buckets.keys(), key=_theme_proxy_move, reverse=True)
-
-            # Header count
-            all_held_tickers = list(held.keys())
-            all_prices = get_live_prices(all_held_tickers)
-            up   = sum(1 for t in all_held_tickers if (all_prices.get(t, {}).get("change_pct") or 0) > 0)
-            down = sum(1 for t in all_held_tickers if (all_prices.get(t, {}).get("change_pct") or 0) < 0)
-            msg += f"<i>{up} up · {down} down (prev close)</i>\n\n"
-
-            # Theme blocks
-            for theme in sorted_themes:
-                tickers = theme_buckets[theme]
-                pair = THEME_INDICES.get(theme, (None, None))
-                proxy_move = _overnight_move(pair[0]) if pair[0] else 0.0
-                proxy_lbl  = f" · {pair[0]} {proxy_move:+.1f}% overnight" if pair[0] and proxy_move != 0 else ""
-                theme_icon = "📈" if proxy_move >= 0 else "📉"
-                msg += f"{theme_icon} <b>{theme}</b>{proxy_lbl}\n"
-                for ticker in sorted(tickers):
-                    d = held.get(ticker, {})
-                    avg_cost = d.get("avg_cost", 0)
-                    name = d.get("name", ticker)[:22]
-                    p = all_prices.get(ticker, {})
-                    price = p.get("price")
-                    chg   = p.get("change_pct") or 0.0
-                    if price and avg_cost:
-                        pnl = (price - avg_cost) / avg_cost * 100
-                        arrow = "▲" if chg > 0 else "▼"
-                        msg += f"  {arrow} <b>{ticker}</b> ({name}): {chg:+.2f}% • P&L: {pnl:+.1f}%\n"
-                    elif price:
-                        msg += f"  ⚪ <b>{ticker}</b> ({name}): ${price:.2f}\n"
-                msg += "\n"
+            # Macro snapshot — futures and FX relevant to HK open
+            macro_tickers = {"NQ=F": "Nasdaq Fut", "ES=F": "S&P Fut", "^HSI": "Hang Seng", "USDCNH=X": "USD/CNH", "GC=F": "Gold"}
+            macro_prices  = get_live_prices(list(macro_tickers.keys()))
+            macro_lines = []
+            for sym, label in macro_tickers.items():
+                p = macro_prices.get(sym, {})
+                price = p.get("price")
+                chg   = p.get("change_pct")
+                if price and chg is not None:
+                    arrow = "▲" if chg > 0 else "▼"
+                    macro_lines.append(f"  {arrow} {label}: {chg:+.1f}%")
+            if macro_lines:
+                msg += f"<b>🌐 Overnight Macro</b>\n" + "\n".join(macro_lines) + "\n"
 
             # Earnings today
             if earnings_today:
-                msg += f"<b>📅 Reporting Today</b>\n"
+                msg += f"\n<b>📅 Reporting Today</b>\n"
                 for item in earnings_today[:6]:
                     msg += f"• {item}\n"
-                msg += "\n"
+            else:
+                msg += f"\n<b>📅 Reporting Today</b>\n<i>Nothing from your watchlist today</i>\n"
 
-            # Overnight news — clean snippets only
-            if market_news:
-                msg += f"<b>🌙 Overnight News</b>\n"
-                for item in market_news:
-                    title = item.get("title", "")[:80].strip()
-                    snippet = _clean_snippet(item.get("content", ""))
-                    msg += f"• {title}\n"
-                    if snippet:
-                        msg += f"  <i>{snippet}</i>\n"
+            # HK news only — Asia-specific query, skip YouTube/generic
+            hk_news = []
+            try:
+                today_str = datetime.now().strftime("%B %d %Y")
+                hk_results = tavily_search(
+                    f"Hong Kong stock market Hang Seng China Asia {today_str}",
+                    max_results=8, search_depth="basic"
+                )
+                _skip_domains = ("youtube.com", "ubs.com", "morganstanley.com", "goldmansachs.com",
+                                 "jpmorgan.com", "blackrock.com", "investing.com", "tradingview.com",
+                                 "seekingalpha.com", "barchart.com")
+                from datetime import timedelta
+                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+                for r in hk_results:
+                    url   = r.get("url", "").lower()
+                    pub   = (r.get("published_date") or "")[:10]
+                    content = r.get("content", "")
+                    if any(d in url for d in _skip_domains):
+                        continue
+                    if pub and pub < yesterday:
+                        continue
+                    snippet = _clean_snippet(content)
+                    if not snippet:
+                        continue
+                    hk_news.append({"title": r.get("title", "")[:80].strip(), "snippet": snippet})
+                    if len(hk_news) == 3:
+                        break
+            except Exception:
+                pass
 
-            # HK positions only if any
+            if hk_news:
+                msg += f"\n<b>🌏 Asia News</b>\n"
+                for item in hk_news:
+                    msg += f"• {item['title']}\n  <i>{item['snippet']}</i>\n"
+            else:
+                msg += f"\n<b>🌏 Asia News</b>\n<i>No HK/Asia headlines found</i>\n"
+
+            # HK positions — only if you hold .HK/.SS/.SZ names
             if mkt_tickers:
-                hk_lines = _build_position_lines(mkt_tickers)
-                if hk_lines:
-                    msg += f"\n<b>🇭🇰 HK Positions</b>\n"
-                    msg += "\n".join(hk_lines) + "\n"
+                hk_prices = get_live_prices(mkt_tickers)
+                msg += f"\n<b>🇭🇰 Your HK Positions</b>\n"
+                for ticker in mkt_tickers:
+                    d = held.get(ticker, {})
+                    avg_cost = d.get("avg_cost", 0)
+                    name = d.get("name", ticker)[:22]
+                    p = hk_prices.get(ticker, {})
+                    price = p.get("price")
+                    if price and avg_cost:
+                        pnl = (price - avg_cost) / avg_cost * 100
+                        emoji = "🟢" if pnl > 0 else "🔴"
+                        msg += f"  {emoji} <b>{ticker}</b> ({name}) · cost P&L {pnl:+.1f}%\n"
 
         else:
             # US open: pre-market movers first, then earnings, then news
