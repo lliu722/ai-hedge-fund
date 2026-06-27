@@ -45,8 +45,13 @@ git add src/tools/telegram_bot.py [other files] && git commit -m "..." && git pu
 - Never build without logging it
 - All tools live in `telegram_bot.py` — not `bot_tools.py` (deleted)
 
-## Architecture reference
-→ See `docs/ARCHITECTURE.md` for: file map, V3 layer status, feature log, known gaps, full tool list.
+## Reference docs
+→ `AGENTS.md` — full developer guide: directory map, conventions, what not to touch, commands
+→ `docs/ARCHITECTURE.md` — 8-layer investment stack, V3 layer status, full tool list
+→ `docs/NEXT_STEPS.md` — prioritised backlog (Thesis Watchdog is #1)
+→ `docs/RUNBOOK.md` — debugging, common failures, how to test manually
+→ `docs/DECISIONS.md` — why key technical choices were made
+→ `docs/HANDOFF.md` — concise current-state summary for handoff
 
 ## ⚠️ MANDATORY AFTER EVERY COMMIT+PUSH — NO EXCEPTIONS
 Every deployment must close with all 3 of these steps before reporting done:

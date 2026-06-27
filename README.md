@@ -11,12 +11,13 @@ A personal investment office running 24/7 as a Telegram bot. Monitors 98 names a
 - **Morning briefing (7am HKT)** — portfolio P&L overnight, filtered headlines, read-through analysis, dedicated AI sector update
 - **Breaking news alerts** — DeepSeek scores headlines 1–10, only fires at ≥8 relevance
 - **Market open alerts** — HK (9:20am HKT) and US (9:20am ET) with pre-market movers, earnings today, macro calendar
-- **Market close alerts** — US/HK/EU — positions by move + synthesis + AI Shadow Portfolio (3 analyst personas each give 1 action call)
+- **Market close alerts** — US/HK/EU — positions by move + synthesis + AI Shadow Portfolio (structured verdict: BUY NOW / SET LIMITS / SKIP + per-ticker detail buttons)
 - **Deep dives** — 9-section research reports on any ticker, ~45s, auto-injects saved notes and earnings history
 - **Proactive analyst** — spots new company names in morning news, auto-runs 4-section mini-dive, max 2/day
 - **Theme Radar** — 55-ETF Z-score scanner across all sectors, weekly in Sunday digest
 - **Monthly 复盘** — auto-pushed 1st of month, win rate + best/worst + 3 lessons from closed trades
 - **Sunday digest** — weekly P&L, sector rotation, theme health, AI stock picks
+- **Entry Points** — tiered buy zones (BUY NOW / WAIT / SET LIMIT / SKIP) with live valuation and 52-week high context
 - **Portfolio tools** — sizing calculator, 腾位置 (make room), valuation monitor, risk engine
 
 ## Tech stack
@@ -36,7 +37,7 @@ All tools and business logic live in `src/tools/`. See `docs/ARCHITECTURE.md` fo
 
 ```
 src/tools/
-  telegram_bot.py       — agent + all 39 @tool functions
+  telegram_bot.py       — agent + all 46 @tool functions
   scheduler.py          — all scheduled jobs
   notion_holdings.py    — portfolio read + write-back
   llm.py                — shared DeepSeek + Tavily helpers
@@ -48,6 +49,26 @@ src/tools/
   ficc.py               — FRED macro data + regime detector
   risk.py               — concentration, correlation, drawdown
   ... (23 files total)
+```
+
+## Setup (local)
+
+```bash
+poetry install
+cp .env.example .env  # fill in TELEGRAM_BOT_TOKEN, DEEPSEEK_API_KEY, NOTION_API_KEY, TAVILY_API_KEY, FRED_API_KEY
+poetry run python -m src.tools.telegram_bot
+```
+
+## Test
+
+```bash
+poetry run pytest tests/ -x -q   # 65 tests, all should pass
+```
+
+## Smoke check
+
+```bash
+poetry run python -c "from src.tools.telegram_bot import tools; print(f'OK — {len(tools)} tools loaded')"
 ```
 
 ## Deploy
