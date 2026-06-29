@@ -46,7 +46,7 @@
 - ✅ Portfolio + watchlist P&L
 - ✅ Price / target alerts
 - ✅ Catalyst calendar
-- 🔴 Thesis-health watch — **biggest single gap**
+- 🟡 Thesis-health watch — verdict state machine built, triggers not wired
 
 ### Review
 - ✅ Monthly 复盘
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Built Coverage synthesize() verdict state machine (§5/§7): core-invalidated→broken, strained→weakening; push only on →broken; rec carries action+rationale, no sizing · `src/features/coverage/synthesize.py`
 - **2026-06-29** — Added Coverage lenses: C/pillars native (reads driver.status); A/fundamentals and B/valuation interface stubs (vendoring deferred pending licence check) · `src/features/coverage/lenses.py`
 - **2026-06-29** — Added Coverage Analyst desk-local types (Evidence, LensView, CoverageResult); kept out of core/objects.py per spec §10 · `src/features/coverage/types.py`
 - **2026-06-29** — Built spine+objects morning briefing as standalone reference (PortfolioAdapter + PriceAdapter → Position objects → string); not wired to live scheduler · `src/features/morning_briefing.py`
