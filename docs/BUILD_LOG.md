@@ -11,7 +11,7 @@
 
 1. ✅ Write canonical objects (§3.1) as code — the shared language. → `src/core/objects.py`
 2. 🟡 Rebuild the **morning briefing** on spine + objects as the reference implementation. → `src/features/morning_briefing.py` (standalone; not wired to live scheduler)
-3. 🔴 Spec + build **Coverage Analyst** (richest desk; closes the thesis-health / sell-discipline gap). Vendor TradingAgents fundamentals analyst + ai-hedge-fund Damodaran agent as modules.
+3. 🟡 Build **Coverage Analyst** skeleton (richest desk; closes the thesis-health / sell-discipline gap). → types + lenses + synthesize + orchestrator built & verified (`src/features/coverage/`). REMAINING: vendor lens A (TradingAgents fundamentals) + lens B (ai-hedge-fund Damodaran) — licence check needed; real evidence assembly; wire triggers (touches live scheduler).
 4. 🔁 Migrate remaining tools onto the desks one at a time; commit after each.
 5. 🔴 Retire the four old docs once everything is migrated; this pair becomes the only source of truth.
 
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Handover review: confirmed Codex completed WORK_ORDER Tasks 1–9 (adapters, morning briefing, full Coverage Analyst skeleton). All verification commands re-run and pass (synthesize → BROKEN/SELL and run_coverage → WEAKENING exactly as specified). No blockers raised. Reconciled CURRENT SPRINT item 3 status 🔴→🟡 (was stale; skeleton built, vendoring/triggers remain). One known gap: morning briefing was built to the pre-hardening Task 5 spec (shows 0.0% pnl) — next task for the worker is to redo it to the hardened spec.
 - **2026-06-29** — Built run_coverage() orchestrator wiring 3 lenses → synthesize → CoverageResult; degrade_to documented; not wired to triggers · `src/features/coverage/desk.py`
 - **2026-06-29** — Built Coverage synthesize() verdict state machine (§5/§7): core-invalidated→broken, strained→weakening; push only on →broken; rec carries action+rationale, no sizing · `src/features/coverage/synthesize.py`
 - **2026-06-29** — Added Coverage lenses: C/pillars native (reads driver.status); A/fundamentals and B/valuation interface stubs (vendoring deferred pending licence check) · `src/features/coverage/lenses.py`
