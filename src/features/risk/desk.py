@@ -5,7 +5,17 @@ return a DATA Signal so callers see that concentration could not be computed.
 """
 from src.adapters.prices import PriceAdapter
 from src.adapters.risk_data import RiskDataAdapter
-from src.core.objects import Position, Signal, SignalType
+from src.core.objects import Action, Position, Recommendation, Signal, SignalType
+
+
+def _market_values(positions: list[Position]) -> dict[str, float]:
+    tickers = [position.name_ref for position in positions]
+    prices = PriceAdapter().fetch(tickers)
+    return {
+        position.name_ref: position.shares
+        * (prices.get(position.name_ref, {}).get("price") or 0)
+        for position in positions
+    }
 
 
 def run_risk_sweep(positions: list[Position]) -> list[Signal]:
@@ -21,12 +31,7 @@ def run_risk_sweep(positions: list[Position]) -> list[Signal]:
         ]
 
     tickers = [position.name_ref for position in positions]
-    prices = PriceAdapter().fetch(tickers)
-    market_values = {
-        position.name_ref: position.shares
-        * (prices.get(position.name_ref, {}).get("price") or 0)
-        for position in positions
-    }
+    market_values = _market_values(positions)
     total = sum(market_values.values())
     if total == 0:
         return [
@@ -80,3 +85,29 @@ def run_risk_sweep(positions: list[Position]) -> list[Signal]:
         )
     )
     return signals
+
+
+def vet_decision(rec: Recommendation, positions: list[Position]) -> Signal:
+    market_values = _market_values(positions)
+    total = sum(market_values.values())
+    weight = (market_values.get(rec.name_ref, 0) / total * 100) if total else 0.0
+
+    if rec.action in {Action.BUY, Action.ADD} and weight > 10:
+        return Signal(
+            type=SignalType.RISK,
+            subject_ref=rec.name_ref,
+            severity=8,
+            summary=(
+                f"CAP: {rec.name_ref} already {weight:.1f}% (>10%) — "
+                "do not add; trim or hold"
+            ),
+            source_desk="risk_watch",
+        )
+
+    return Signal(
+        type=SignalType.RISK,
+        subject_ref=rec.name_ref,
+        severity=1,
+        summary=f"{rec.name_ref} within limits ({weight:.1f}%) — no cap",
+        source_desk="risk_watch",
+    )
