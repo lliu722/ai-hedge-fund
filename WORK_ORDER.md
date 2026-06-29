@@ -147,7 +147,7 @@ Must print the on_failure string and `<class 'dict'>`.
    - Import `Position` from `src.core.objects`.
    - Inside this method only, import and call the existing function `get_holdings_cached` from `src.tools.notion_holdings`.
    - Wrap in `try/except`. On any exception, return `[]` (declared `on_failure`).
-   - On success, `get_holdings_cached()` returns a dict keyed by ticker. For each ticker `t` and its data dict `d`, build a `Position` with: `name_ref=t`, `account=d.get("account","default")`, `shares=d.get("shares",0)`, `avg_cost=d.get("avg_cost",0)`, `current_price=d.get("current_price",0)`. Leave `pnl_abs`, `pnl_pct`, `weight` at their defaults (0.0). Only include tickers where `shares` is greater than 0 (held positions, not watchlist).
+   - On success, `get_holdings_cached()` returns a dict keyed by ticker. Each value dict `d` has exactly these keys: `account`, `avg_cost`, `name`, `rating`, `role`, `sector`, `shares`, `thesis`. There is NO `current_price` key — do not read one. For each ticker `t` and its data dict `d`, build a `Position` with: `name_ref=t`, `account=d.get("account","default")`, `shares=d.get("shares",0)`, `avg_cost=d.get("avg_cost",0)`. Leave `current_price`, `pnl_abs`, `pnl_pct`, `weight` at their defaults (0.0) — live price is supplied separately by `PriceAdapter`, not by this adapter. Only include tickers where `shares` is greater than 0 (held positions, not watchlist).
    - Return the list of `Position` objects.
 4. Do **not** modify `src/tools/notion_holdings.py`.
 
@@ -174,10 +174,15 @@ Must print a count and a `Position(...)` (or `none` if Notion returns nothing �
 1. Create folder `src/features/` with empty `src/features/__init__.py` (if it does not already exist).
 2. Create `src/features/morning_briefing.py`.
 3. Define `def build_morning_briefing() -> str`:
-   - Use `PortfolioAdapter` (from `src.adapters.portfolio`) to get `list[Position]`.
-   - Use `PriceAdapter` (from `src.adapters.prices`) to fetch live prices for the tickers in those positions.
-   - Build a plain string: a header line `Morning Briefing — <today's date>`, then one line per position sorted by `pnl_pct` descending, formatted `<ticker>: <current_price> (<pnl_pct>%)`. Use the live price from `PriceAdapter` where available; if a ticker is missing from the price dict, write `data pending` for its price.
-   - `degrade_to`: if `PortfolioAdapter.fetch()` returns `[]`, return the string `"Morning Briefing — no positions available (data pending)"`. Document this `degrade_to` behaviour in the module docstring.
+   - Use `PortfolioAdapter` (from `src.adapters.portfolio`) to get `positions: list[Position]`.
+   - Collect the tickers: `tickers = [p.name_ref for p in positions]`.
+   - Use `PriceAdapter` (from `src.adapters.prices`) to fetch `prices = PriceAdapter().fetch(tickers)`. The returned shape is `{ticker: {"price": float, "change_pct": float}}`. IMPORTANT: a ticker that failed to fetch is PRESENT in the dict but maps to an empty dict `{}` — it is not absent. Access it as `prices.get(p.name_ref, {}).get("price")` which yields `None` for a failed ticker.
+   - For each position `p`, compute:
+     - `price = prices.get(p.name_ref, {}).get("price")` (may be `None`).
+     - if `price` is falsy (None or 0): the line is `f"{p.name_ref}: data pending"`, and use a sort key of `-9999` for it.
+     - else: `pnl_pct = round((price - p.avg_cost) / p.avg_cost * 100, 1) if p.avg_cost else 0.0`, the line is `f"{p.name_ref}: ${price} ({pnl_pct}% vs cost)"`, and the sort key is `pnl_pct`.
+   - Build the output string: header line `f"Morning Briefing — {date.today().isoformat()}"` (import `date` from `datetime`), then the position lines sorted by sort key **descending**, one per line, joined with `"\n"`.
+   - `degrade_to`: if `PortfolioAdapter().fetch()` returns `[]`, return exactly `"Morning Briefing — no positions available (data pending)"`. Document this `degrade_to` behaviour in the module docstring.
    - Do not call any data SDK directly — only the two adapters.
 4. Do not send anything to Telegram. This task returns a string only.
 

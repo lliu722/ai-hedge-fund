@@ -133,6 +133,12 @@ Dependency rule: these never import data SDKs directly — `evidence` is assembl
 ---
 
 ## 13 · Open questions for Louis (decide before/while building)
+
+> **Status — provisional answers in force.** Louis has not given final answers yet. Until he does, `WORK_ORDER.md` Tasks 7–8 carry **explicit provisional defaults** and are the authoritative instruction for any agent building this desk. **Build to the WORK_ORDER, not to these questions.** This is NOT a conflict to STOP on — the WORK_ORDER wins; these notes record the defaults and stay open for Louis to override via a new work order.
+
 1. **Core vs non-core drivers** — should *you* tag which thesis drivers are "core" (whose invalidation = broken), or should the desk infer it?
+   - *Provisional default (WORK_ORDER Task 8):* read `driver.is_core` straight from the `Driver` object. Do not infer.
 2. **Push threshold** — alert on every degrade, or only on →broken (and batch →weakening into the Sunday sweep)?
+   - *Provisional default (WORK_ORDER Task 8):* push only on degrade to BROKEN; WEAKENING is silent (batched to the Sunday sweep by a later task).
 3. **Trim vs sell** — do you want sizing guidance on a degrade (hand to House View), or just the verdict + flag?
+   - *Provisional default (WORK_ORDER Task 8):* `Recommendation` carries `action` + `rationale` only; `size=""`. Sizing is House View's job, wired later.
