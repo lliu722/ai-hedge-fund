@@ -1,3 +1,5 @@
+from numbers import Number
+
 from src.core.objects import DriverStatus, Name, Thesis
 from src.features.coverage.types import Evidence, LensView
 
@@ -21,10 +23,70 @@ def lens_fundamentals(name, thesis, evidence) -> LensView:
     )
 
 
+def _pe_verdict(forward_pe) -> tuple[str, str]:
+    if isinstance(forward_pe, Number):
+        if forward_pe < 15:
+            verdict = "cheap"
+        elif forward_pe > 30:
+            verdict = "expensive"
+        else:
+            verdict = "fair"
+        return verdict, f"valuation: {verdict} (P/E fallback, forward P/E {forward_pe})"
+    return "fair", "valuation: data partial — no DCF, no P/E"
+
+
+# Lens B: adapted from src/agents/aswath_damodaran.py (ai-hedge-fund, MIT). See NOTICE.md.
 def lens_valuation(name, thesis, evidence) -> LensView:
+    fundamentals = evidence.fundamentals
+    fcff = fundamentals.get("free_cash_flow")
+    shares = fundamentals.get("shares_outstanding")
+    market_cap = fundamentals.get("market_cap")
+    beta = fundamentals.get("beta")
+    growth = fundamentals.get("revenue_growth")
+    forward_pe = fundamentals.get("forward_pe")
+
+    if not fcff or not shares or not market_cap:
+        verdict, summary = _pe_verdict(forward_pe)
+        return LensView(
+            source="valuation",
+            per_driver={},
+            summary=summary,
+            signal=None,
+        )
+
+    cost_of_equity = 0.045 + (beta * 0.05) if isinstance(beta, Number) else 0.09
+    base_growth = min(growth, 0.12) if isinstance(growth, Number) and growth > 0 else 0.04
+    terminal_growth = 0.025
+    years = 10
+    g = base_growth
+    g_step = (terminal_growth - base_growth) / (years - 1)
+
+    pv_sum = 0.0
+    for year in range(1, years + 1):
+        fcff_t = fcff * (1 + g)
+        pv = fcff_t / (1 + cost_of_equity) ** year
+        pv_sum += pv
+        g += g_step
+
+    tv = (
+        fcff
+        * (1 + terminal_growth)
+        / (cost_of_equity - terminal_growth)
+        / (1 + cost_of_equity) ** years
+    )
+    equity_value = pv_sum + tv
+    margin_of_safety = (equity_value - market_cap) / market_cap
+
+    if margin_of_safety >= 0.25:
+        verdict = "cheap"
+    elif margin_of_safety <= -0.25:
+        verdict = "expensive"
+    else:
+        verdict = "fair"
+
     return LensView(
         source="valuation",
         per_driver={},
-        summary="not yet vendored — pending licence verification",
+        summary=f"valuation: {verdict} (margin of safety {round(margin_of_safety * 100)}%)",
         signal=None,
     )

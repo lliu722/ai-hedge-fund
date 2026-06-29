@@ -65,7 +65,7 @@
 | Desk | Spec written | Built (legacy) | Migrated to model | Sources vendored | Notes |
 |---|---|---|---|---|---|
 | Research Librarian | 🟡 (blueprint stub) | 🟡 library only | 🔴 | 🔴 LlamaIndex | PDF ingestion missing |
-| **Coverage Analyst** | 🟡 (blueprint stub) | ✅ deep dive/val | 🟡 | 🔴 TradingAgents + ai-hedge-fund | orchestrator built; triggers/lenses-vendoring pending |
+| **Coverage Analyst** | 🟡 (blueprint stub) | ✅ deep dive/val | 🟡 | 🟡 TradingAgents + ai-hedge-fund | B done, A pending; triggers pending |
 | Idea Scout | 🟡 | ✅ radar/proactive | 🔴 | 🔴 OpenBB | multi-feed, not multi-opinion |
 | House View (CIO) | 🟡 | ✅ personas/shadow | 🔴 | 🔴 ai-hedge-fund + TradingAgents | strongest A/B/C desk |
 | Quant Engine | 🟡 | ✅ V3 Quant | 🔴 | 🔴 Qlib | single method |
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Lens B real: ported Damodaran FCFF DCF + margin-of-safety from src/agents/aswath_damodaran.py to read Evidence.fundamentals; cheap/fair/expensive with P/E degrade path · `src/features/coverage/lenses.py`
 - **2026-06-29** — Added EvidenceService.assemble(name_ref) → Evidence with fundamentals via FundamentalsAdapter · `src/services/evidence.py`
 - **2026-06-29** — Added LLMAdapter wrapping call_deepseek; on_failure (falsy or ❌) returns "" · `src/adapters/llm.py`
 - **2026-06-29** — Added FundamentalsAdapter (yfinance .info → 11-key normalised dict); on_failure returns {} · `src/adapters/fundamentals.py`
