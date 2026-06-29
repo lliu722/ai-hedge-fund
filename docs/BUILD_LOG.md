@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Added RiskDataAdapter (regime via ficc.get_macro_regime + correlation>0.70 via yfinance, US equities only); on_failure → empty corr + UNKNOWN regime; deliberately avoids scheduler-coupled risk.py · `src/adapters/risk_data.py`
 - **2026-06-29** — Quant Engine desk: run_quant_screen converts factor ranks → THEME Signals (severity from composite, RSI caveat for overbought/oversold); degrade_to DATA signal · `src/features/quant/desk.py`
 - **2026-06-29** — Added QuantAdapter wrapping score_universe → list[dict]; on_failure returns [] · `src/adapters/quant.py`
 - **2026-06-29** — Wrote `WORK_ORDER_RISK.md` (Risk Watch onto desk model, on-demand). 3 literal tasks: RW1 RiskDataAdapter (regime via ficc + correlation>0.70 via yfinance, US equities only — deliberately avoids scheduler-coupled risk.py), RW2 run_risk_sweep (single-name >10% concentration + correlation pairs + regime → RISK Signals, degrade_to DATA when no prices), RW3 vet_decision (binding cap by current weight, avoids parsing free-text size). No dispatcher/triggers/live-scheduler. Key grounding: risk.py imports PORTFOLIO_CATEGORIES from live scheduler at module load, so the work order forbids importing it and reimplements correlation in the adapter.
