@@ -38,6 +38,30 @@ def send_telegram(message: str) -> bool:
             ok = False
     return ok
 
+
+def send_telegram_with_buttons(message: str, buttons: list[list[dict]]) -> bool:
+    """Send a Telegram message with inline keyboard buttons.
+    buttons = [[{"text": "NVDA", "callback_data": "shadow:NVDA"}, ...], ...]
+    """
+    token   = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return False
+    try:
+        import json
+        payload = {
+            "chat_id": chat_id,
+            "text": message[:4096],
+            "parse_mode": "HTML",
+            "reply_markup": json.dumps({"inline_keyboard": buttons}),
+        }
+        r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload)
+        return r.status_code == 200
+    except Exception as e:
+        print(f"Telegram button message error: {e}")
+        return False
+
+
 def send_price_alert(ticker: str, price: float, change_pct: float) -> bool:
     """Send a price movement alert."""
     direction = "📈" if change_pct > 0 else "📉"

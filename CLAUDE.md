@@ -1,60 +1,14 @@
-# ⚠️ CRITICAL — READ BEFORE EVERY ACTION
+# CLAUDE.md
 
-After every `git push`, you MUST complete all 3 steps before saying "done". No exceptions, no skipping:
-1. **Notion** — append to Architecture & Decision Log (38770984-77e4-8125-a509-fe1325e133fd)
-2. **CLAUDE.md** — update current state (tool count, positions); commit + push the change
-3. **Memory** — update `memory/project_state.md` and `memory/feedback_rules.md`
+@AGENTS.md
 
-Deployment is NOT complete until all 3 are done.
+<!--
+This is a thin shim. The canonical instructions live in AGENTS.md (read by Codex, Cursor, etc.);
+the @import above pulls them in for Claude Code, which does not read AGENTS.md natively.
+One source of truth, no drift. Put ONLY Claude-specific notes below.
+-->
 
----
-
-# AI Investment Management System
-
-## Identity
-Multi-asset portfolio manager Telegram bot (@AI_InvestorL_bot) on Railway.
-Current theme: AI infrastructure. System is theme-agnostic.
-GitHub: github.com/lliu722/ai-hedge-fund
-
-## Current state (as of 2026-06-26)
-- **46 tools** registered in agent
-- 41 held positions (shares > 0) — portfolio with dollar P&L
-- 57 watchlist names (shares = 0) — monitoring only
-- 98 total in Notion Holdings DB
-
-## Adding a new tool
-1. Add @tool function to `src/tools/telegram_bot.py`
-2. Add to `tools = [...]` list in `telegram_bot.py`
-3. Commit and push — Railway auto-deploys in ~2 minutes
-
-## Deploy
-```
-git add src/tools/telegram_bot.py [other files] && git commit -m "..." && git push origin main
-```
-
-## Notion IDs
-- Architecture & Decision Log: `38770984-77e4-8125-a509-fe1325e133fd`
-- Master Plan: `38870984-77e4-81bb-9eab-e4739d14ca4c`
-- Holdings DB: `9dd63515-c7ae-4f2c-bbc9-a73c6c65bbd1`
-- Trade Journal DB: `57ec5347-fc06-490d-9a60-e99e65a3d9bc`
-- Master page: `38870984-77e4-818f-bd8b-ff154aa37a35`
-
-## Rules
-- Surgical edits preferred over full file rewrites
-- Always commit and push after each build
-- Never build without logging it
-- All tools live in `telegram_bot.py` — not `bot_tools.py` (deleted)
-
-## Reference docs
-→ `AGENTS.md` — full developer guide: directory map, conventions, what not to touch, commands
-→ `docs/ARCHITECTURE.md` — 8-layer investment stack, V3 layer status, full tool list
-→ `docs/NEXT_STEPS.md` — prioritised backlog (Thesis Watchdog is #1)
-→ `docs/RUNBOOK.md` — debugging, common failures, how to test manually
-→ `docs/DECISIONS.md` — why key technical choices were made
-→ `docs/HANDOFF.md` — concise current-state summary for handoff
-
-## ⚠️ MANDATORY AFTER EVERY COMMIT+PUSH — NO EXCEPTIONS
-Every deployment must close with all 3 of these steps before reporting done:
-1. **Notion** — append entry to Architecture & Decision Log: what was built, key decisions, tool count
-2. **CLAUDE.md** — update tool count and current state; commit + push
-3. **Memory files** — update `memory/project_state.md` (tool count, new files) and `memory/feedback_rules.md` if new rules learned
+## Claude Code notes
+- Detailed specs load on demand: `docs/BLUEPRINT.md`, `docs/BUILD_LOG.md`, `docs/desks/*.md`.
+- When starting a desk, read its `docs/desks/{desk}.md` first — it is the operations manual.
+- Keep this file and AGENTS.md lean; heavy detail belongs in `docs/`, not here.
