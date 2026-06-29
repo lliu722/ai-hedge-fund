@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Added Coverage lenses: C/pillars native (reads driver.status); A/fundamentals and B/valuation interface stubs (vendoring deferred pending licence check) · `src/features/coverage/lenses.py`
 - **2026-06-29** — Added Coverage Analyst desk-local types (Evidence, LensView, CoverageResult); kept out of core/objects.py per spec §10 · `src/features/coverage/types.py`
 - **2026-06-29** — Built spine+objects morning briefing as standalone reference (PortfolioAdapter + PriceAdapter → Position objects → string); not wired to live scheduler · `src/features/morning_briefing.py`
 - **2026-06-29** — Added PortfolioAdapter producing Position objects from get_holdings_cached (held only, shares>0) · `src/adapters/portfolio.py`
