@@ -10,7 +10,7 @@
 ## CURRENT SPRINT — migration to the new model (strangler; bot stays live)
 
 1. ✅ Write canonical objects (§3.1) as code — the shared language. → `src/core/objects.py`
-2. 🔁 Rebuild the **morning briefing** on spine + objects as the reference implementation.
+2. 🟡 Rebuild the **morning briefing** on spine + objects as the reference implementation. → `src/features/morning_briefing.py` (standalone; not wired to live scheduler)
 3. 🔴 Spec + build **Coverage Analyst** (richest desk; closes the thesis-health / sell-discipline gap). Vendor TradingAgents fundamentals analyst + ai-hedge-fund Damodaran agent as modules.
 4. 🔁 Migrate remaining tools onto the desks one at a time; commit after each.
 5. 🔴 Retire the four old docs once everything is migrated; this pair becomes the only source of truth.
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Built spine+objects morning briefing as standalone reference (PortfolioAdapter + PriceAdapter → Position objects → string); not wired to live scheduler · `src/features/morning_briefing.py`
 - **2026-06-29** — Added PortfolioAdapter producing Position objects from get_holdings_cached (held only, shares>0) · `src/adapters/portfolio.py`
 - **2026-06-29** — Added PriceAdapter wrapping src.tools.prices.get_live_prices behind the adapter interface · `src/adapters/prices.py`
 - **2026-06-29** — Added adapter base interface (Adapter ABC + AdapterError, on_failure required) · `src/adapters/base.py`
