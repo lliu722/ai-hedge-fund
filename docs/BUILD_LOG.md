@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Added PortfolioAdapter producing Position objects from get_holdings_cached (held only, shares>0) · `src/adapters/portfolio.py`
 - **2026-06-29** — Added PriceAdapter wrapping src.tools.prices.get_live_prices behind the adapter interface · `src/adapters/prices.py`
 - **2026-06-29** — Added adapter base interface (Adapter ABC + AdapterError, on_failure required) · `src/adapters/base.py`
 - **2026-06-29** — Wrote `WORK_ORDER.md` (repo root) — an executable, literal-agent task list derived from CURRENT SPRINT + coverage_analyst.md. Tasks: 1 objects (done) → 2 adapter base → 3 PriceAdapter → 4 PortfolioAdapter → 5 morning-briefing reference → 6–9 Coverage Analyst (types, lenses, synthesize, orchestrator) → 10–11 deferred (not executable). Encoded provisional defaults for spec §13 open questions (read is_core from Driver; push only on →broken; rec carries action+rationale, no sizing). Listed in README folder layout. No code executed.
