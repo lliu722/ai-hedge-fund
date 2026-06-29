@@ -62,10 +62,15 @@ Mechanical pipeline, no opinion:
 
 ## 6 · Sources — single best implementation (mechanical desk, not A/B/C)
 **TradingAgents role borrowed:** the **data / report-retrieval layer** that sits behind the analysts (evidence supply), not an opinion analyst. This is a mechanical desk, so it ships **one** method rather than presenting three opinions.
-- **Primary (library):** **LlamaIndex** — RAG / chunking / extraction over reports and transcripts. Integration mode: **library** (imported behind our ingestion interface in one place).
-- **Reference (reimplement the good parts):** **TradingAgents News Analyst** extraction-prompt pattern — mode **reference**. **FinGPT** financial-summarisation prompting — mode **reference**.
 
-Single shipped path: LlamaIndex for retrieval/chunking + our own extraction prompt cribbed from the TradingAgents News Analyst, translated into our `Report` / `Signal` objects.
+- **LlamaIndex** — mode **library** — RAG / chunking over reports, transcripts, filings (imported behind our ingestion interface in one place).
+- **TradingAgents** — mode **reference** — crib three specific patterns, reimplemented to speak our objects:
+  - `dataflows/` — the **fetch → structure** pattern (how raw sources become structured data).
+  - `news_analyst.py` — the **content-ingestion** pattern (how a document is read and reduced to takeaways).
+  - `reporting.py` — the **output-template** pattern (how the structured result is laid out).
+- **FinGPT** — mode **reference** — financial-summarisation prompt patterns.
+
+**No A/B/C.** Single shipped path: LlamaIndex for retrieval/chunking + an extraction/reporting prompt cribbed from the TradingAgents `dataflows/` + `news_analyst.py` + `reporting.py` patterns and FinGPT summarisation, all translated into our `Report` / `Signal` objects.
 
 ---
 
