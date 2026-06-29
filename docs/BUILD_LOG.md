@@ -69,7 +69,7 @@
 | Idea Scout | ✅ | ✅ radar/proactive | 🔴 | 🔴 OpenBB | multi-feed, not multi-opinion |
 | House View (CIO) | ✅ | ✅ personas/shadow | 🔴 | 🔴 ai-hedge-fund + TradingAgents | strongest A/B/C desk |
 | Quant Engine | ✅ | ✅ V3 Quant | 🟡 | 🔴 Qlib | on-demand rank signals built; optimiser/backtest/routing pending |
-| Risk Watch | ✅ | ✅ Phase 1 | 🔴 | 🔴 (reference only) | always-on |
+| Risk Watch | ✅ | ✅ Phase 1 | 🟡 | 🔴 (reference only) | on-demand sweep built; decision cap/routing pending |
 
 > "Spec written" = full six-field block agreed. Blueprint currently holds first-pass stubs; per-desk deep specs are the next work item.
 
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Risk Watch desk: run_risk_sweep emits RISK Signals (single-name >10% concentration, >0.70 correlation pairs, macro regime); degrade_to DATA signal when no prices · `src/features/risk/desk.py`
 - **2026-06-29** — Added RiskDataAdapter (regime via ficc.get_macro_regime + correlation>0.70 via yfinance, US equities only); on_failure → empty corr + UNKNOWN regime; deliberately avoids scheduler-coupled risk.py · `src/adapters/risk_data.py`
 - **2026-06-29** — Quant Engine desk: run_quant_screen converts factor ranks → THEME Signals (severity from composite, RSI caveat for overbought/oversold); degrade_to DATA signal · `src/features/quant/desk.py`
 - **2026-06-29** — Added QuantAdapter wrapping score_universe → list[dict]; on_failure returns [] · `src/adapters/quant.py`
