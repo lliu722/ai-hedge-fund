@@ -9,7 +9,7 @@
 
 ## CURRENT SPRINT — migration to the new model (strangler; bot stays live)
 
-1. 🔴 Write canonical objects (§3.1) as code — the shared language. **Do this first.**
+1. ✅ Write canonical objects (§3.1) as code — the shared language. → `src/core/objects.py`
 2. 🔁 Rebuild the **morning briefing** on spine + objects as the reference implementation.
 3. 🔴 Spec + build **Coverage Analyst** (richest desk; closes the thesis-health / sell-discipline gap). Vendor TradingAgents fundamentals analyst + ai-hedge-fund Damodaran agent as modules.
 4. 🔁 Migrate remaining tools onto the desks one at a time; commit after each.
@@ -77,7 +77,7 @@
 
 ## PART 3 · STANDARDS & SUPPORT — status
 
-- 🔴 Canonical objects (§3.1) — defined in blueprint, **not yet code**. First task.
+- ✅ Canonical objects (§3.1) — coded as dataclasses + enums in `src/core/objects.py` (7 objects, 6 enums, `to_dict` serialiser). Zero data-SDK imports (stable core).
 - 🔴 Multi-source policy — agreed; modules not yet built.
 - 🟡 Sources registry — listed; licenses to verify; nothing vendored yet.
 - ✅ Communication & Delivery — Telegram/Notion live; timings live.
@@ -91,6 +91,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Canonical objects coded → `src/core/objects.py`. 7 dataclasses (Name, Position, Thesis, Signal, Recommendation, Report, Event) + Driver, 6 enums (AssetClass, Verdict, DriverStatus, Action, SignalType, EventType), and a `to_dict()` serialiser (flattens enums/datetimes for Notion/SQLite). Decisions: (1) names referenced by ticker string (`name_ref`), not by Name instance — stable, serialisable, matches Notion/SQLite. (2) `Driver` promoted to its own object (id, summary, is_core, status, evidence) to support the Coverage Analyst per-driver state machine. (3) `Recommendation.size` kept free-text by design. (4) New code lives under `src/core/` (blueprint `core/` mapping, stays importable in `src` package). Verified: imports clean, round-trips through `to_dict`.
 - **2026-06-29** — Adopted three-part architecture (Spine / Desks / Standards). Desks-first, then functions. Removed migration from the architecture map into this log. Multi-source per opinion desk (A/B/C) approved, with guardrail: sources are modules sharing canonical objects, not live frameworks. TradingAgents = vendored; ai-hedge-fund = vendored; OpenBB/Qlib/LlamaIndex = libraries; FinRobot/HKUDS repos = reference.
 
 > Add one line per decision, before moving on.
