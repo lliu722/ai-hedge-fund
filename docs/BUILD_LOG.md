@@ -65,7 +65,7 @@
 | Desk | Spec written | Built (legacy) | Migrated to model | Sources vendored | Notes |
 |---|---|---|---|---|---|
 | Research Librarian | 🟡 (blueprint stub) | 🟡 library only | 🔴 | 🔴 LlamaIndex | PDF ingestion missing |
-| **Coverage Analyst** | 🟡 (blueprint stub) | ✅ deep dive/val | 🔴 | 🔴 TradingAgents + ai-hedge-fund | **next up**; thesis-watch is the gap |
+| **Coverage Analyst** | 🟡 (blueprint stub) | ✅ deep dive/val | 🟡 | 🔴 TradingAgents + ai-hedge-fund | orchestrator built; triggers/lenses-vendoring pending |
 | Idea Scout | 🟡 | ✅ radar/proactive | 🔴 | 🔴 OpenBB | multi-feed, not multi-opinion |
 | House View (CIO) | 🟡 | ✅ personas/shadow | 🔴 | 🔴 ai-hedge-fund + TradingAgents | strongest A/B/C desk |
 | Quant Engine | 🟡 | ✅ V3 Quant | 🔴 | 🔴 Qlib | single method |
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Built run_coverage() orchestrator wiring 3 lenses → synthesize → CoverageResult; degrade_to documented; not wired to triggers · `src/features/coverage/desk.py`
 - **2026-06-29** — Built Coverage synthesize() verdict state machine (§5/§7): core-invalidated→broken, strained→weakening; push only on →broken; rec carries action+rationale, no sizing · `src/features/coverage/synthesize.py`
 - **2026-06-29** — Added Coverage lenses: C/pillars native (reads driver.status); A/fundamentals and B/valuation interface stubs (vendoring deferred pending licence check) · `src/features/coverage/lenses.py`
 - **2026-06-29** — Added Coverage Analyst desk-local types (Evidence, LensView, CoverageResult); kept out of core/objects.py per spec §10 · `src/features/coverage/types.py`
