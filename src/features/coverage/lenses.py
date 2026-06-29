@@ -1,6 +1,8 @@
+import json
 from numbers import Number
 
 from src.core.objects import DriverStatus, Name, Thesis
+from src.adapters.llm import LLMAdapter
 from src.features.coverage.types import Evidence, LensView
 
 
@@ -14,11 +16,51 @@ def lens_pillars(name: Name, thesis: Thesis, evidence: Evidence) -> LensView:
     )
 
 
+# Lens A: fundamentals-analyst prompt pattern adapted from TradingAgents (Apache-2.0). See NOTICE.md.
 def lens_fundamentals(name, thesis, evidence) -> LensView:
+    drivers = "\n".join(f"{driver.id}: {driver.summary}" for driver in thesis.drivers)
+    prompt = f"""Saved thesis drivers:
+{drivers}
+
+Latest fundamentals:
+{evidence.fundamentals}
+
+You are a fundamentals analyst. Given the saved thesis drivers and the latest fundamentals, classify EACH driver as one of: holding, strained, invalidated — based only on what the fundamentals support. Reply ONLY with a JSON object mapping each driver id to its status, plus a key "summary" with one sentence. Example: {{"d1": "holding", "summary": "margins stable"}}."""
+
+    raw = LLMAdapter().fetch(prompt, system="You output only valid JSON.")
+    if not raw:
+        return LensView(
+            source="fundamentals",
+            per_driver={},
+            summary="fundamentals lens unavailable (LLM error)",
+            signal=None,
+        )
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return LensView(
+            source="fundamentals",
+            per_driver={},
+            summary="fundamentals lens: unparseable response",
+            signal=None,
+        )
+
+    per_driver = {}
+    statuses = {
+        "holding": DriverStatus.HOLDING,
+        "strained": DriverStatus.STRAINED,
+        "invalidated": DriverStatus.INVALIDATED,
+    }
+    for driver in thesis.drivers:
+        status = data.get(driver.id)
+        if status in statuses:
+            per_driver[driver.id] = statuses[status]
+
     return LensView(
         source="fundamentals",
-        per_driver={},
-        summary="not yet vendored — pending licence verification",
+        per_driver=per_driver,
+        summary=data.get("summary", ""),
         signal=None,
     )
 
