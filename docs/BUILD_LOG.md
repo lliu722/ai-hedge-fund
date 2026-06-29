@@ -65,7 +65,7 @@
 | Desk | Spec written | Built (legacy) | Migrated to model | Sources vendored | Notes |
 |---|---|---|---|---|---|
 | Research Librarian | 🟡 (blueprint stub) | 🟡 library only | 🔴 | 🔴 LlamaIndex | PDF ingestion missing |
-| **Coverage Analyst** | 🟡 (blueprint stub) | ✅ deep dive/val | 🟡 | ✅ TradingAgents + ai-hedge-fund | lenses A/B real; triggers pending |
+| **Coverage Analyst** | 🟡 (blueprint stub) | ✅ deep dive/val | ✅ | ✅ TradingAgents + ai-hedge-fund | on-demand model path verified; triggers pending |
 | Idea Scout | 🟡 | ✅ radar/proactive | 🔴 | 🔴 OpenBB | multi-feed, not multi-opinion |
 | House View (CIO) | 🟡 | ✅ personas/shadow | 🔴 | 🔴 ai-hedge-fund + TradingAgents | strongest A/B/C desk |
 | Quant Engine | 🟡 | ✅ V3 Quant | 🔴 | 🔴 Qlib | single method |
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — End-to-end Coverage run on MU with real evidence (FundamentalsAdapter → EvidenceService → 3 lenses → synthesize); runs clean · verification only
 - **2026-06-29** — Lens A real: TradingAgents fundamentals prompt pattern via LLMAdapter → per-driver holding/strained/invalidated JSON; degrade paths for LLM error + unparseable · `src/features/coverage/lenses.py`
 - **2026-06-29** — Lens B real: ported Damodaran FCFF DCF + margin-of-safety from src/agents/aswath_damodaran.py to read Evidence.fundamentals; cheap/fair/expensive with P/E degrade path · `src/features/coverage/lenses.py`
 - **2026-06-29** — Added EvidenceService.assemble(name_ref) → Evidence with fundamentals via FundamentalsAdapter · `src/services/evidence.py`
