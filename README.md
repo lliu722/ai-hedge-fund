@@ -19,6 +19,7 @@ This repo works with Claude Code, Codex, Cursor, and a human, off **one source o
 ## Folder layout
 ```
 .
+├── ONBOARDING.md       ← read this first
 ├── README.md            ← you are here (human front door)
 ├── AGENTS.md            ← canonical agent rules (Codex/Cursor/…)
 ├── CLAUDE.md            ← shim: @AGENTS.md  (Claude Code)

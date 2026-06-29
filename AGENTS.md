@@ -8,6 +8,7 @@ A personal multi-asset investment office that runs 24/7 as a Telegram bot. **It 
 Stack: Python · LangGraph (DeepSeek V4) · Telegram · Notion · Railway. Data: yfinance, FRED, CoinGecko, Tavily, SEC EDGAR, GitHub, arXiv.
 
 ## Where the truth lives (read before acting)
+- `ONBOARDING.md` — read before anything else.
 - `docs/BLUEPRINT.md` — the architecture (Spine = functions, Desks = operators, Standards = foundations).
 - `docs/BUILD_LOG.md` — current status of every branch + the active sprint. **Pick work from here.**
 - `docs/desks/*.md` — per-desk operations manuals (build a desk straight from its spec).
