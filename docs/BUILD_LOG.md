@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Added LLMAdapter wrapping call_deepseek; on_failure (falsy or ❌) returns "" · `src/adapters/llm.py`
 - **2026-06-29** — Added FundamentalsAdapter (yfinance .info → 11-key normalised dict); on_failure returns {} · `src/adapters/fundamentals.py`
 - **2026-06-29** — Added NOTICE.md attributing TradingAgents (Apache-2.0) and ai-hedge-fund (MIT) per vendoring duty · `NOTICE.md`
 - **2026-06-29** — Wrote `WORK_ORDER_PHASE2.md` (Coverage real lenses) after Louis's decisions: data source = yfinance (financialdatasets deferred), LLM on (all 3 lenses real), §13 defaults stand. Literal tasks P1 NOTICE.md → P2 FundamentalsAdapter (yfinance .info, 11 keys) → P3 LLMAdapter (wraps call_deepseek) → P4 EvidenceService → P5 lens B real (ported Damodaran DCF + margin-of-safety, P/E degrade) → P6 lens A real (TradingAgents prompt → per-driver JSON) → P7 end-to-end on MU. Triggers + Notion write-back explicitly out of scope. Data shapes pre-verified against aswath_damodaran.py and call_deepseek signature.
