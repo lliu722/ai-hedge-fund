@@ -19,6 +19,7 @@
 | Earnings transcript published for any name | event (`Event:earnings` + transcript text available) | the reporting name | fires when a transcript becomes available for ingestion (distinct from Coverage's earnings trigger: Librarian *files* it, Coverage *re-tests the thesis* on it) |
 | SEC filing fetched (10-K / 10-Q / 8-K) | event (`Event:threshold` filing) | the filing's name | fires when a new filing is pulled and its text is available to extract |
 | User asks "summarise X" / pastes a report or URL | pull | the named document | on demand |
+| Another desk requests an evidence pack | pull (inter-desk) | a named ticker/theme | Coverage Analyst or Idea Scout asks "what do we have filed on X?" → Librarian returns the relevant filed `Report`s + takeaways |
 
 ---
 
@@ -36,13 +37,15 @@ That is the only Spine function this desk operates. It does not deep-dive, value
 - one `Report` — `{ source, title, asset_class, date, extracted_thesis, extracted_risks, names_mentioned[] }`.
 - one or more `Signal`s — one per material takeaway, `type=NEWS` (new fact) or `type=THESIS` (bears on a saved thesis), `subject_ref` = the affected ticker, `severity` 1–10, `source_desk="research_librarian"`.
 
+On a pull request from another desk it also returns an **evidence pack** — the relevant filed `Report`s + extracted takeaways for the named ticker/theme (the report-side complement to the live-data `EvidenceService`).
+
 **Destination (every hop is explicit):**
 - **Telegram** — the takeaway card (§8) to the user.
 - **Notion** — the `Report` persisted to the research library DB.
-- **→ Coverage Analyst** (inter-desk) — for each **covered** name in `names_mentioned`, route the `THESIS` `Signal` so Coverage re-tests that name's thesis against the new report.
-- **→ Idea Scout** (inter-desk) — for each **uncovered** name in `names_mentioned`, route a `NEWS` `Signal` so Idea Scout can consider it as a candidate.
+- **→ Coverage Analyst** (inter-desk) — for each **covered** name in `names_mentioned`, route the `THESIS` `Signal` so Coverage re-tests that name's thesis against the new report; and serve the evidence pack when Coverage asks.
+- **→ Idea Scout** (inter-desk) — for each **uncovered** name in `names_mentioned`, route a `NEWS` `Signal` so Idea Scout can consider it as a candidate; and serve the evidence pack when Idea Scout asks.
 
-This desk is **not** pull-only: its standing job is to fan structured signals out to Coverage and Idea Scout.
+This desk is **not** pull-only: its standing job is to fan structured signals out to Coverage and Idea Scout, and to serve evidence packs on request.
 
 ---
 
@@ -58,7 +61,7 @@ Mechanical pipeline, no opinion:
 ---
 
 ## 6 · Sources — single best implementation (mechanical desk, not A/B/C)
-This is a mechanical desk, so it ships **one** method rather than presenting three opinions.
+**TradingAgents role borrowed:** the **data / report-retrieval layer** that sits behind the analysts (evidence supply), not an opinion analyst. This is a mechanical desk, so it ships **one** method rather than presenting three opinions.
 - **Primary (library):** **LlamaIndex** — RAG / chunking / extraction over reports and transcripts. Integration mode: **library** (imported behind our ingestion interface in one place).
 - **Reference (reimplement the good parts):** **TradingAgents News Analyst** extraction-prompt pattern — mode **reference**. **FinGPT** financial-summarisation prompting — mode **reference**.
 

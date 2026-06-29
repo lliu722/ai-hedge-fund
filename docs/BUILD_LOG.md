@@ -66,7 +66,7 @@
 |---|---|---|---|---|---|
 | Research Librarian | ✅ | 🟡 library only | 🔴 | 🔴 LlamaIndex | PDF ingestion missing |
 | **Coverage Analyst** | 🟡 (blueprint stub) | ✅ deep dive/val | ✅ | ✅ TradingAgents + ai-hedge-fund | on-demand model path verified; triggers pending |
-| Idea Scout | 🟡 | ✅ radar/proactive | 🔴 | 🔴 OpenBB | multi-feed, not multi-opinion |
+| Idea Scout | ✅ | ✅ radar/proactive | 🔴 | 🔴 OpenBB | multi-feed, not multi-opinion |
 | House View (CIO) | 🟡 | ✅ personas/shadow | 🔴 | 🔴 ai-hedge-fund + TradingAgents | strongest A/B/C desk |
 | Quant Engine | 🟡 | ✅ V3 Quant | 🔴 | 🔴 Qlib | single method |
 | Risk Watch | 🟡 | ✅ Phase 1 | 🔴 | 🔴 (reference only) | always-on |
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Wrote full Idea Scout desk spec → `docs/desks/idea_scout.md` (all 13 sections). Decisions: (1) opinion desk borrowing TradingAgents News Analyst (feed A) + Sentiment Analyst (feed B), with native theme/momentum as feed C, OpenBB as the data floor; (2) A/B/C are signal *feeds* — promotion bar = ≥2 feeds agree → route to Coverage; single feed = "watch"; (3) disagreement (news-hot vs crowded) is surfaced in output, never averaged; precedence C=thesis frame, A=urgency, B=crowding caveat; (4) routes promotions to Coverage Analyst and pulls evidence packs from Research Librarian — not pull-only; (5) candidate expressed as `Name`+`Signal` (no new canonical object); (6) Cooldown 7-day per name, max 2 promotions/day; (7) hop 1 (own scan) or hop 2 (via Librarian), cap 3 hops. 3 open questions (Candidate object, promotion bar, hunt universe). Also updated Research Librarian spec: added inter-desk pull trigger (evidence pack on request) + named its borrowed role (data/report-retrieval layer).
 - **2026-06-29** — Wrote full Research Librarian desk spec → `docs/desks/research_librarian.md` (all 13 template sections). Decisions made: (1) mechanical desk — single best implementation (LlamaIndex library + TradingAgents News-Analyst / FinGPT as reference), not A/B/C; (2) it is NOT pull-only — routes a THESIS Signal to Coverage Analyst for covered-name mentions and a NEWS Signal to Idea Scout for uncovered names; (3) within-report factual conflicts are surfaced not resolved (reliability signal); (4) Cooldown = max one Coverage re-test per covered name per 24h; (5) dedup by raw-bytes report hash; (6) Librarian is chain hop 1 (entry point, never triggered by another desk), max 3 hops total. 3 open questions flagged (intake channel, routing aggressiveness, retention).
 - **2026-06-29** — End-to-end Coverage run on MU with real evidence (FundamentalsAdapter → EvidenceService → 3 lenses → synthesize); runs clean · verification only
 - **2026-06-29** — Lens A real: TradingAgents fundamentals prompt pattern via LLMAdapter → per-driver holding/strained/invalidated JSON; degrade paths for LLM error + unparseable · `src/features/coverage/lenses.py`
