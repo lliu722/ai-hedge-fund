@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Added EvidenceService.assemble(name_ref) → Evidence with fundamentals via FundamentalsAdapter · `src/services/evidence.py`
 - **2026-06-29** — Added LLMAdapter wrapping call_deepseek; on_failure (falsy or ❌) returns "" · `src/adapters/llm.py`
 - **2026-06-29** — Added FundamentalsAdapter (yfinance .info → 11-key normalised dict); on_failure returns {} · `src/adapters/fundamentals.py`
 - **2026-06-29** — Added NOTICE.md attributing TradingAgents (Apache-2.0) and ai-hedge-fund (MIT) per vendoring duty · `NOTICE.md`
