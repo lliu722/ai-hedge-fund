@@ -68,7 +68,7 @@
 | **Coverage Analyst** | ✅ | ✅ deep dive/val | ✅ | ✅ TradingAgents + ai-hedge-fund | on-demand model path verified; triggers pending |
 | Idea Scout | ✅ | ✅ radar/proactive | 🔴 | 🔴 OpenBB | multi-feed, not multi-opinion |
 | House View (CIO) | ✅ | ✅ personas/shadow | 🔴 | 🔴 ai-hedge-fund + TradingAgents | strongest A/B/C desk |
-| Quant Engine | ✅ | ✅ V3 Quant | 🔴 | 🔴 Qlib | single method |
+| Quant Engine | ✅ | ✅ V3 Quant | 🟡 | 🔴 Qlib | on-demand rank signals built; optimiser/backtest/routing pending |
 | Risk Watch | ✅ | ✅ Phase 1 | 🔴 | 🔴 (reference only) | always-on |
 
 > "Spec written" = full six-field block agreed. Blueprint currently holds first-pass stubs; per-desk deep specs are the next work item.
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Quant Engine desk: run_quant_screen converts factor ranks → THEME Signals (severity from composite, RSI caveat for overbought/oversold); degrade_to DATA signal · `src/features/quant/desk.py`
 - **2026-06-29** — Added QuantAdapter wrapping score_universe → list[dict]; on_failure returns [] · `src/adapters/quant.py`
 - **2026-06-29** — Wrote `WORK_ORDER_RISK.md` (Risk Watch onto desk model, on-demand). 3 literal tasks: RW1 RiskDataAdapter (regime via ficc + correlation>0.70 via yfinance, US equities only — deliberately avoids scheduler-coupled risk.py), RW2 run_risk_sweep (single-name >10% concentration + correlation pairs + regime → RISK Signals, degrade_to DATA when no prices), RW3 vet_decision (binding cap by current weight, avoids parsing free-text size). No dispatcher/triggers/live-scheduler. Key grounding: risk.py imports PORTFOLIO_CATEGORIES from live scheduler at module load, so the work order forbids importing it and reimplements correlation in the adapter.
 - **2026-06-29** — Wrote `WORK_ORDER_QUANT.md` (Quant Engine onto desk model, on-demand). 2 literal tasks: QE1 QuantAdapter (wraps score_universe → list[dict], on_failure []), QE2 quant desk run_quant_screen (rank rows → THEME Signals, severity from composite, RSI overbought/oversold caveat, degrade_to DATA signal). Verified clean import of factors.score_universe (no scheduler side effects). No dispatcher/triggers/live-scheduler. Decision: no dedicated quant SignalType — reuse THEME with source_desk=quant_engine.
