@@ -81,6 +81,7 @@
 - 🔴 Multi-source policy — agreed; modules not yet built.
 - 🟡 Sources registry — listed; licenses to verify; nothing vendored yet.
 - ✅ ONBOARDING.md added to root — single entry point; read order points to AGENTS → BLUEPRINT → BUILD_LOG → desk spec.
+- ✅ WORK_ORDER.md written — executable, literal task list for a less-capable agent (infra → adapters → Coverage Analyst), each task self-contained with verification + Build Log wording.
 - ✅ Communication & Delivery — Telegram/Notion live; timings live.
 - 🟡 Systematic standards — templates exist ad-hoc; **🔴 not centralised.**
 - 🟡 Knowledge — static playbooks partial; dynamic learning 🔴.
@@ -92,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Wrote `WORK_ORDER.md` (repo root) — an executable, literal-agent task list derived from CURRENT SPRINT + coverage_analyst.md. Tasks: 1 objects (done) → 2 adapter base → 3 PriceAdapter → 4 PortfolioAdapter → 5 morning-briefing reference → 6–9 Coverage Analyst (types, lenses, synthesize, orchestrator) → 10–11 deferred (not executable). Encoded provisional defaults for spec §13 open questions (read is_core from Driver; push only on →broken; rec carries action+rationale, no sizing). Listed in README folder layout. No code executed.
 - **2026-06-29** — Added `ONBOARDING.md` to repo root as the single first-read entry point (orientation + read order + non-negotiable rules). Listed first in README folder layout ("← read this first"); referenced at the top of AGENTS.md "Where the truth lives" ("read before anything else").
 - **2026-06-29** — Canonical objects coded → `src/core/objects.py`. 7 dataclasses (Name, Position, Thesis, Signal, Recommendation, Report, Event) + Driver, 6 enums (AssetClass, Verdict, DriverStatus, Action, SignalType, EventType), and a `to_dict()` serialiser (flattens enums/datetimes for Notion/SQLite). Decisions: (1) names referenced by ticker string (`name_ref`), not by Name instance — stable, serialisable, matches Notion/SQLite. (2) `Driver` promoted to its own object (id, summary, is_core, status, evidence) to support the Coverage Analyst per-driver state machine. (3) `Recommendation.size` kept free-text by design. (4) New code lives under `src/core/` (blueprint `core/` mapping, stays importable in `src` package). Verified: imports clean, round-trips through `to_dict`.
 - **2026-06-29** — Adopted three-part architecture (Spine / Desks / Standards). Desks-first, then functions. Removed migration from the architecture map into this log. Multi-source per opinion desk (A/B/C) approved, with guardrail: sources are modules sharing canonical objects, not live frameworks. TradingAgents = vendored; ai-hedge-fund = vendored; OpenBB/Qlib/LlamaIndex = libraries; FinRobot/HKUDS repos = reference.

@@ -23,6 +23,7 @@ This repo works with Claude Code, Codex, Cursor, and a human, off **one source o
 ├── README.md            ← you are here (human front door)
 ├── AGENTS.md            ← canonical agent rules (Codex/Cursor/…)
 ├── CLAUDE.md            ← shim: @AGENTS.md  (Claude Code)
+├── WORK_ORDER.md        ← active work order for AI agents
 ├── docs/
 │   ├── BLUEPRINT.md     ← 图纸 — architecture (source of truth)
 │   ├── BUILD_LOG.md     ← 工作日志 — status + sprint
