@@ -383,13 +383,19 @@ def _compute_rsi(closes: list, period: int = 14) -> float | None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 7. RESEARCH REPORT LIBRARY
-# Stub — live reads come from B4 knowledge_base when built
+# 7. RESEARCH REPORT LIBRARY  (B4 knowledge_base)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_research_reports(ticker: str) -> list[dict]:
-    """Returns saved research for a ticker. Stub — B4 will replace."""
-    return []
+def get_research_reports(ticker: str, report_type: str | None = None) -> list[dict]:
+    """Saved research documents for a ticker from the B4 knowledge base."""
+    from src.desks.equity_ls.infrastructure.b4_knowledge_base import knowledge_base
+    return knowledge_base.get_reports(ticker, report_type)
+
+
+def get_kb_summary(ticker: str) -> dict:
+    """Quick KB summary: report count, current thesis, latest agent signal."""
+    from src.desks.equity_ls.infrastructure.b4_knowledge_base import knowledge_base
+    return knowledge_base.get_kb_summary(ticker)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
