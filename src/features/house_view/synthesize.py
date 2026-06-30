@@ -20,6 +20,10 @@ def _map_total_to_action(total: float) -> Action:
 
 
 def _conviction(personas: list[PersonaCall]) -> float:
+    if personas and all(
+        call.action == "hold" and call.conviction == "Low" for call in personas
+    ):
+        return 3.0
     scores = [_ACTION_SCORE.get(call.action, 0) for call in personas]
     signs = {1 if score > 0 else (-1 if score < 0 else 0) for score in scores}
     if len(signs) == 1:

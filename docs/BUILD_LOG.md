@@ -67,7 +67,7 @@
 | Research Librarian | ✅ | 🟡 library only | 🔴 | 🔴 LlamaIndex | PDF ingestion missing |
 | **Coverage Analyst** | ✅ | ✅ deep dive/val | ✅ | ✅ TradingAgents + ai-hedge-fund | on-demand model path verified; triggers pending |
 | Idea Scout | ✅ | ✅ radar/proactive | 🔴 | 🔴 OpenBB | multi-feed, not multi-opinion |
-| House View (CIO) | ✅ | ✅ personas/shadow | 🔴 | 🔴 ai-hedge-fund + TradingAgents | strongest A/B/C desk |
+| House View (CIO) | ✅ | ✅ personas/shadow | 🟡 | 🟡 ai-hedge-fund + TradingAgents | on-demand A/B/C + PM View built; triggers/journal pending |
 | Quant Engine | ✅ | ✅ V3 Quant | 🟡 | 🔴 Qlib | on-demand rank signals built; optimiser/backtest/routing pending |
 | Risk Watch | ✅ | ✅ Phase 1 | 🟡 | 🔴 (reference only) | on-demand sweep + decision cap built; routing pending |
 
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — House View desk: run_house_view (A persona + B debate + C trader → synthesize → Recommendation) + pm_view button (one-call advisory verdict); degrade to HOLD/low when LLM down; not wired to triggers · `src/features/house_view/desk.py`
 - **2026-06-29** — House View synthesize_view: persona direction avg + debate lean + quant tiebreak → Action; conviction from agreement; size from trader lens (risk-capped); disagreement surfaced · `src/features/house_view/synthesize.py`
 - **2026-06-29** — House View lens B (bull/bear debate, JSON, degrade balanced) + lens C (trader sizing rule, honours risk CAP as hard constraint, no size_position import) · `src/features/house_view/lenses.py`
 - **2026-06-29** — House View lens A: persona panel via LLMAdapter + recommendations.py prompts → 4 PersonaCalls (JSON), degrade to hold/Low · `src/features/house_view/lenses.py`
