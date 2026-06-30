@@ -69,155 +69,18 @@ def _gate(ticker: str) -> tuple[bool, int | None, str]:
     return meta.in_scope, meta.tier, meta.rejection_reason
 
 
-# ── Step 2: Screening context ─────────────────────────────────────────────────
-# Louis: add your extra screening checks here.
-# Each check should append to `flags` if something is wrong.
-# The full `data` dict is passed to the desk conclusion LLM as context.
+# ── Step 2: Screening ────────────────────────────────────────────────────────
 
-def _build_screening_context(ticker: str) -> tuple[dict, list[str]]:
-    """
-    Pull key screening metrics from B2 and flag anything that fails a basic threshold.
-    Returns (data_dict, flags_list).
-
-    ADD YOUR EXTRA SCREENING CHECKS BELOW — there is a clearly marked section.
-    """
-    from src.desks.equity_ls.infrastructure.b2_data_source.data_sources import (
-        get_market_data,
-        get_internal_scores,
-        get_earnings_dates,
-    )
-
-    data: dict = {}
-    flags: list[str] = []
-
-    # ── Market data ───────────────────────────────────────────────────────────
-    md = get_market_data(ticker)
-    if "_error" not in md:
-        data.update({
-            "price":             md.get("price"),
-            "market_cap":        md.get("market_cap"),
-            "avg_volume_10d":    md.get("avg_volume_10d"),
-            "trailing_pe":       md.get("trailing_pe"),
-            "forward_pe":        md.get("forward_pe"),
-            "price_to_book":     md.get("price_to_book"),
-            "ev_to_ebitda":      md.get("ev_to_ebitda"),
-            "revenue_growth":    md.get("revenue_growth"),
-            "gross_margins":     md.get("gross_margins"),
-            "operating_margins": md.get("operating_margins"),
-            "profit_margins":    md.get("profit_margins"),
-            "free_cash_flow":    md.get("free_cash_flow"),
-            "return_on_equity":  md.get("return_on_equity"),
-            "debt_to_equity":    md.get("debt_to_equity"),
-            "current_ratio":     md.get("current_ratio"),
-            "short_percent_float": md.get("short_percent_float"),
-            "beta":              md.get("beta"),
-            "week52_high":       md.get("week52_high"),
-            "week52_low":        md.get("week52_low"),
-            "target_mean_price": md.get("target_mean_price"),
-            "recommendation":    md.get("recommendation"),
-            "analyst_count":     md.get("analyst_count"),
-            "sector":            md.get("sector"),
-            "industry":          md.get("industry"),
-        })
-
-        # Basic liquidity check
-        cap = md.get("market_cap") or 0
-        vol = md.get("avg_volume_10d") or 0
-        if cap < 500_000_000:
-            flags.append(f"Micro-cap: market cap ${cap/1e6:.0f}M — liquidity risk")
-        if vol < 500_000:
-            flags.append(f"Low volume: avg 10d volume {vol:,.0f} — liquidity risk")
-
-        # Basic balance sheet check
-        de = md.get("debt_to_equity")
-        cr = md.get("current_ratio")
-        if de is not None and de > 3.0:
-            flags.append(f"High leverage: D/E = {de:.1f}")
-        if cr is not None and cr < 0.8:
-            flags.append(f"Weak liquidity: current ratio = {cr:.2f}")
-
-        # Negative FCF flag
-        fcf = md.get("free_cash_flow")
-        if fcf is not None and fcf < 0:
-            flags.append(f"Negative FCF: ${fcf/1e6:.0f}M")
-
-    else:
-        flags.append(f"Market data unavailable: {md['_error']}")
-
-    # ── Quant scores ──────────────────────────────────────────────────────────
-    scores = get_internal_scores(ticker)
-    if "_error" not in scores:
-        data.update({
-            "momentum":        scores.get("momentum"),
-            "rsi":             scores.get("rsi"),
-            "composite_score": scores.get("composite_score"),
-            "quality_score":   scores.get("quality_score"),
-            "valuation_score": scores.get("valuation_score"),
-            "risk_score":      scores.get("risk_score"),
-            "signal":          scores.get("signal"),
-        })
-
-        rsi = scores.get("rsi")
-        if rsi is not None and rsi > 80:
-            flags.append(f"Overbought RSI: {rsi:.1f}")
-        if rsi is not None and rsi < 25:
-            flags.append(f"Oversold RSI: {rsi:.1f} (potential opportunity or falling knife)")
-
-        risk = scores.get("risk_score")
-        if risk is not None and risk > 2.0:
-            flags.append(f"High risk score (|beta| proxy): {risk:.2f}")
-
-    # ── Earnings proximity ────────────────────────────────────────────────────
-    try:
-        earn = get_earnings_dates(ticker)
-        next_earnings = earn.get("next_earnings_date")
-        if next_earnings:
-            data["next_earnings"] = str(next_earnings)
-            # Warn if earnings within 2 weeks
-            try:
-                days_to = (datetime.strptime(str(next_earnings)[:10], "%Y-%m-%d") - datetime.now()).days
-                if 0 <= days_to <= 14:
-                    flags.append(f"Earnings in {days_to} days — binary event risk")
-                data["days_to_earnings"] = days_to
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-    # ═════════════════════════════════════════════════════════════════════════
-    # ADD YOUR EXTRA SCREENING CHECKS HERE
-    # ═════════════════════════════════════════════════════════════════════════
-    # Pattern:
-    #   value = data.get("some_field")
-    #   if value is not None and <condition>:
-    #       flags.append("Description of the flag")
-    # ═════════════════════════════════════════════════════════════════════════
-
-    return data, flags
+def _run_screening(ticker: str, tier: int):
+    """Run the full 6-step screener. Returns ScreeningResult."""
+    from src.desks.equity_ls.core.a2_deep_dive import screener
+    return screener.run(ticker, tier=tier)
 
 
-def _format_screening_for_prompt(ticker: str, tier: int, data: dict, flags: list[str]) -> str:
-    """Format screening context as a readable block for LLM prompts."""
-    flag_block = "\n".join(f"⚠️  {f}" for f in flags) if flags else "None"
-    return f"""SCREENING CONTEXT — {ticker} (Tier {tier})
-
-Financials:
-  Market Cap: ${(data.get('market_cap') or 0)/1e9:.2f}B | Avg Vol 10d: {(data.get('avg_volume_10d') or 0):,.0f}
-  P/E TTM: {data.get('trailing_pe', 'N/A')} | P/E Fwd: {data.get('forward_pe', 'N/A')} | EV/EBITDA: {data.get('ev_to_ebitda', 'N/A')}
-  Rev Growth: {data.get('revenue_growth', 'N/A')} | Gross Margin: {data.get('gross_margins', 'N/A')} | Op Margin: {data.get('operating_margins', 'N/A')}
-  ROE: {data.get('return_on_equity', 'N/A')} | FCF: ${(data.get('free_cash_flow') or 0)/1e6:.0f}M | D/E: {data.get('debt_to_equity', 'N/A')}
-
-Quant Scores:
-  Momentum: {data.get('momentum', 'N/A')} | RSI: {data.get('rsi', 'N/A')} | Quality: {data.get('quality_score', 'N/A')}
-  Composite: {data.get('composite_score', 'N/A')} | Signal: {data.get('signal', 'N/A')}
-
-Next Earnings: {data.get('next_earnings', 'N/A')} ({data.get('days_to_earnings', '?')} days)
-Analyst rec: {data.get('recommendation', 'N/A')} (n={data.get('analyst_count', 0)}) | Target: ${data.get('target_mean_price', 'N/A')}
-Short Float: {data.get('short_percent_float', 'N/A')} | Beta: {data.get('beta', 'N/A')}
-Sector: {data.get('sector', 'N/A')} | Industry: {data.get('industry', 'N/A')}
-
-Screening Flags:
-{flag_block}"""
+def _format_screening_for_prompt(sr) -> str:
+    """Format ScreeningResult into LLM-ready block."""
+    from src.desks.equity_ls.core.a2_deep_dive import screener
+    return screener.format_for_prompt(sr)
 
 
 # ── Step 4: Desk conclusion ───────────────────────────────────────────────────
@@ -405,16 +268,23 @@ def run(
     result.tier = tier
     print(f"[A2] Universe gate: PASS (Tier {tier})")
 
-    # ── 2. Screening context ──────────────────────────────────────────────────
-    print("[A2] Building screening context...")
-    data, flags = _build_screening_context(ticker)
-    result.screening_context = data
-    result.screening_flags = flags
-    screening_block = _format_screening_for_prompt(ticker, tier, data, flags)
-    print(f"[A2] Screening done. Flags: {len(flags)}")
-    if flags:
-        for f in flags:
+    # ── 2. Screening ─────────────────────────────────────────────────────────
+    print("[A2] Running screener (Steps 1–6)...")
+    sr = _run_screening(ticker, tier)
+    result.screening_context = sr.raw
+    result.screening_flags = sr.flags
+    screening_block = _format_screening_for_prompt(sr)
+    print(f"[A2] Screener done. Score: {sr.composite_score}/100 | {sr.classification}")
+    if sr.flags:
+        for f in sr.flags:
             print(f"  ⚠️  {f}")
+
+    # Hard filter fail inside screener (different from universe gate)
+    if not sr.hard_pass:
+        result.verdict = "Avoid"
+        result.errors["screener"] = sr.hard_fail_reason
+        print(f"[A2] Hard filter failed: {sr.hard_fail_reason}")
+        return result
 
     # ── 3. TradingAgents run ──────────────────────────────────────────────────
     if not skip_ta:
