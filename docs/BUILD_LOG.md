@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — Added House View desk-local types (PersonaCall, DebateView, SizeView) · `src/features/house_view/types.py`
 - **2026-06-29** — Risk Watch vet_decision: binding cap by current weight — buy/add to a >10% name returns CAP signal, else within-limits; size-string parsing deliberately avoided · `src/features/risk/desk.py`
 - **2026-06-29** — Risk Watch desk: run_risk_sweep emits RISK Signals (single-name >10% concentration, >0.70 correlation pairs, macro regime); degrade_to DATA signal when no prices · `src/features/risk/desk.py`
 - **2026-06-29** — Added RiskDataAdapter (regime via ficc.get_macro_regime + correlation>0.70 via yfinance, US equities only); on_failure → empty corr + UNKNOWN regime; deliberately avoids scheduler-coupled risk.py · `src/adapters/risk_data.py`
