@@ -122,22 +122,147 @@ Produce the desk conclusion covering:
 
 # ── Step 5: Valuation / Upside-Downside ──────────────────────────────────────
 
-def _run_valuation_view(ticker: str, screening_block: str, desk_conclusion: str) -> str:
-    prompt = f"""You are the valuation analyst for the Equity L/S desk. Based on the screening data
-and desk conclusion below, produce a valuation and upside/downside view for {ticker}.
+# Peer map: ticker → list of closest comparable tickers.
+# Used for real horizontal comparison. Extend as needed.
+_PEER_MAP: dict[str, list[str]] = {
+    # US Semis
+    "NVDA": ["AMD", "INTC", "AVGO", "QCOM", "TSM"],
+    "AMD":  ["NVDA", "INTC", "AVGO", "QCOM"],
+    "AVGO": ["NVDA", "AMD", "QCOM", "MRVL", "TXN"],
+    "QCOM": ["AVGO", "AMD", "MRVL", "TXN"],
+    "TSM":  ["NVDA", "ASML", "INTC", "AVGO"],
+    "ASML": ["TSM", "AMAT", "KLAC", "LRCX"],
+    # US Mega-cap Tech
+    "AAPL": ["MSFT", "GOOGL", "META", "AMZN"],
+    "MSFT": ["AAPL", "GOOGL", "AMZN", "CRM"],
+    "GOOGL":["MSFT", "META", "AMZN", "SNAP"],
+    "META": ["GOOGL", "SNAP", "PINS", "RDDT"],
+    "AMZN": ["MSFT", "GOOGL", "BABA", "JD"],
+    # Financials
+    "JPM":  ["GS", "MS", "BAC", "C"],
+    "GS":   ["JPM", "MS", "BX", "BAC"],
+    "BLK":  ["BX", "APO", "KKR", "SCHW"],
+    "V":    ["MA", "PYPL", "AXP", "FIS"],
+    "MA":   ["V", "PYPL", "AXP", "FIS"],
+    # Healthcare
+    "LLY":  ["NVO", "PFE", "MRK", "ABBV"],
+    "UNH":  ["CVS", "CI", "HUM", "MOH"],
+    "JNJ":  ["ABT", "MDT", "PFE", "MRK"],
+    # Energy
+    "XOM":  ["CVX", "COP", "BP", "SHEL"],
+    "CVX":  ["XOM", "COP", "OXY", "BP"],
+    # Consumer
+    "WMT":  ["COST", "TGT", "AMZN", "KR"],
+    "COST": ["WMT", "TGT", "BJ", "AMZN"],
+    "MCD":  ["YUM", "QSR", "CMG", "SBUX"],
+    # HK / China
+    "0700.HK": ["9988.HK", "BIDU", "JD", "NTES"],
+    "9988.HK": ["0700.HK", "JD", "PDD", "BIDU"],
+    # Japan
+    "6758.T": ["7203.T", "6861.T", "AAPL", "SMSN.IL"],
+    "7203.T": ["6758.T", "TSLA", "HMC", "7267.T"],
+    # Crypto-equity
+    "COIN":  ["MSTR", "HOOD", "MARA", "RIOT"],
+}
+
+# Sector fallback peers if ticker not in _PEER_MAP
+_SECTOR_FALLBACK: dict[str, list[str]] = {
+    "Technology":             ["AAPL", "MSFT", "NVDA", "GOOGL"],
+    "Financials":             ["JPM", "GS", "BAC", "MS"],
+    "Healthcare":             ["JNJ", "LLY", "UNH", "PFE"],
+    "Energy":                 ["XOM", "CVX", "COP", "BP"],
+    "Consumer Cyclical":      ["AMZN", "TSLA", "MCD", "NKE"],
+    "Consumer Defensive":     ["WMT", "COST", "PG", "KO"],
+    "Industrials":            ["CAT", "HON", "GE", "RTX"],
+    "Communication Services": ["GOOGL", "META", "DIS", "NFLX"],
+    "Basic Materials":        ["LIN", "APD", "NEM", "FCX"],
+}
+
+
+def _get_peer_comparison(ticker: str, sector: str) -> str:
+    """
+    Fetch real multiples for peers and format a comparison table.
+    Returns a markdown-style table string for injection into the valuation prompt.
+    """
+    from src.desks.equity_ls.infrastructure.b2_data_source.data_sources import get_market_data
+    from concurrent.futures import ThreadPoolExecutor
+
+    peers = _PEER_MAP.get(ticker, _SECTOR_FALLBACK.get(sector, []))[:5]
+    if not peers:
+        return "No peer data available."
+
+    all_tickers = [ticker] + [p for p in peers if p != ticker]
+
+    def fetch(t: str) -> tuple[str, dict]:
+        return t, get_market_data(t)
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        results = dict(ex.map(lambda t: fetch(t), all_tickers))
+
+    def _fmt(val, fmt=".1f", suffix=""):
+        if val is None:
+            return "N/A"
+        try:
+            return f"{val:{fmt}}{suffix}"
+        except Exception:
+            return "N/A"
+
+    def _fcf_yield(d: dict) -> str:
+        fcf = d.get("free_cash_flow") or 0
+        cap = d.get("market_cap") or 1
+        if fcf <= 0 or cap <= 0:
+            return "N/A"
+        return f"{fcf/cap*100:.1f}%"
+
+    header = f"{'Ticker':<10} {'P/E':>6} {'FwdP/E':>7} {'EV/EBITDA':>10} {'P/S':>6} {'FCFYld':>7} {'GrMgn':>7} {'RevGrw':>7}"
+    sep    = "-" * len(header)
+    rows   = [header, sep]
+
+    for t in all_tickers:
+        d = results.get(t, {})
+        if "_error" in d:
+            rows.append(f"{t:<10} {'error':>6}")
+            continue
+        marker = " ◀" if t == ticker else ""
+        rows.append(
+            f"{t:<10}"
+            f" {_fmt(d.get('trailing_pe'), '.1f'):>6}"
+            f" {_fmt(d.get('forward_pe'), '.1f'):>7}"
+            f" {_fmt(d.get('ev_to_ebitda'), '.1f'):>10}"
+            f" {_fmt(d.get('price_to_sales'), '.1f'):>6}"
+            f" {_fcf_yield(d):>7}"
+            f" {_fmt(d.get('gross_margins') and d['gross_margins']*100, '.0f', '%'):>7}"
+            f" {_fmt(d.get('revenue_growth') and d['revenue_growth']*100, '.0f', '%'):>7}"
+            f"{marker}"
+        )
+
+    return "\n".join(rows)
+
+
+def _run_valuation_view(ticker: str, screening_block: str, desk_conclusion: str, sector: str = "") -> str:
+    print(f"[A2] Fetching peer comparison for {ticker}...")
+    peer_table = _get_peer_comparison(ticker, sector)
+
+    prompt = f"""You are the valuation analyst for the Equity L/S desk.
+You have real market data for {ticker} and its closest peers. Use the peer table as your primary
+reference — do not invent multiples. Comment on where {ticker} sits vs each peer specifically.
 
 {screening_block}
+
+PEER COMPARISON (live data):
+{peer_table}
 
 DESK CONCLUSION:
 {desk_conclusion}
 
 Produce:
-1. Current valuation assessment — cheap / fair / rich / very rich vs history and peers
-2. Peer comparison — name 2-3 closest peers and how {ticker} compares on key multiples
-3. Historical range — where do current multiples sit vs the name's own 3-5 year range?
-4. Base case upside/downside — what is the bull case price target and bear case price?
-5. Growth quality — is the growth durable, or are there red flags (one-time items, channel stuff)?
-6. Does the upside justify the risk? Answer clearly: Yes / No / Only on weakness"""
+1. Valuation assessment — cheap / fair / rich / very rich, and vs which specific peers
+2. Horizontal comparison — for each peer in the table, is {ticker}'s P/E / EV/EBITDA / FCF yield
+   higher or lower, and is the premium or discount justified by the growth/quality difference?
+3. Historical range — where do current multiples sit vs the name's own history?
+4. Base case upside/downside — bull case price target and bear case price with rationale
+5. Growth quality — is the growth durable or are there red flags?
+6. Does the upside justify the risk vs peers? Answer clearly: Yes / No / Only on weakness"""
 
     try:
         resp = _llm().invoke(prompt)
@@ -310,7 +435,8 @@ def run(
 
     # ── 5. Valuation view ─────────────────────────────────────────────────────
     print("[A2] Running valuation view...")
-    result.valuation_view = _run_valuation_view(ticker, screening_block, result.desk_conclusion)
+    sector = result.screening_context.get("sector", "")
+    result.valuation_view = _run_valuation_view(ticker, screening_block, result.desk_conclusion, sector)
     print(f"[A2] Valuation view: {len(result.valuation_view)} chars")
 
     # ── 6. Trade expression ───────────────────────────────────────────────────
