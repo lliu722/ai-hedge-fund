@@ -132,13 +132,13 @@ def _assign_tier(ticker: str) -> int:
 
 
 def _is_holding(ticker: str) -> bool:
-    # Stub — will read from B3 portfolio_db when built
-    return False
+    from src.desks.equity_ls.infrastructure import portfolio_db
+    return portfolio_db.is_holding(ticker)
 
 
 def _is_watchlist(ticker: str) -> bool:
-    # Stub — will read from B3 portfolio_db when built
-    return False
+    from src.desks.equity_ls.infrastructure import portfolio_db
+    return portfolio_db.is_watchlist(ticker)
 
 
 # ── Internal checks ───────────────────────────────────────────────────────────

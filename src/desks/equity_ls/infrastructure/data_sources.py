@@ -168,22 +168,25 @@ def _merge(yf: dict, obb: dict) -> dict:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 2. PORTFOLIO / USER DATA
-# Stubs — replaced by live B3 portfolio_db reads when built
+# Live reads from B3 portfolio_db (standalone SQLite)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def get_holdings() -> list[dict]:
-    """Returns current holdings. Stub — B3 will replace."""
-    return []
+def get_holdings(account: str | None = None) -> list[dict]:
+    """Current holdings from the portfolio DB."""
+    from src.desks.equity_ls.infrastructure import portfolio_db
+    return portfolio_db.get_holdings(account)
 
 
 def get_watchlist() -> list[dict]:
-    """Returns watchlist. Stub — B3 will replace."""
-    return []
+    """Watchlist from the portfolio DB."""
+    from src.desks.equity_ls.infrastructure import portfolio_db
+    return portfolio_db.get_watchlist()
 
 
-def get_trade_journal() -> list[dict]:
-    """Returns trade history. Stub — B3 will replace."""
-    return []
+def get_trade_journal(ticker: str | None = None) -> list[dict]:
+    """Trade history from the portfolio DB."""
+    from src.desks.equity_ls.infrastructure import portfolio_db
+    return portfolio_db.get_trades(ticker)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
