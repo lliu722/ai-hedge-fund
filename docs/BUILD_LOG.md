@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — House View lens A: persona panel via LLMAdapter + recommendations.py prompts → 4 PersonaCalls (JSON), degrade to hold/Low · `src/features/house_view/lenses.py`
 - **2026-06-29** — Added House View desk-local types (PersonaCall, DebateView, SizeView) · `src/features/house_view/types.py`
 - **2026-06-29** — Risk Watch vet_decision: binding cap by current weight — buy/add to a >10% name returns CAP signal, else within-limits; size-string parsing deliberately avoided · `src/features/risk/desk.py`
 - **2026-06-29** — Risk Watch desk: run_risk_sweep emits RISK Signals (single-name >10% concentration, >0.70 correlation pairs, macro regime); degrade_to DATA signal when no prices · `src/features/risk/desk.py`
