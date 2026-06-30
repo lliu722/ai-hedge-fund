@@ -1,8 +1,8 @@
 import json
 
 from src.adapters.llm import LLMAdapter
-from src.core.objects import Name, Thesis
-from src.features.house_view.types import DebateView, PersonaCall
+from src.core.objects import Name, Position, Signal, Thesis
+from src.features.house_view.types import DebateView, PersonaCall, SizeView
 from src.tools.recommendations import CATHIE_WOOD, DAMODARAN, DRUCKENMILLER, LI_WEI
 
 
@@ -59,3 +59,52 @@ Give your call on this name as JSON only: {{"action": one of buy/add/hold/trim/s
         )
 
     return calls
+
+
+def lens_debate(name: Name, thesis: Thesis) -> DebateView:
+    prompt = f"""Ticker: {name.ticker}
+Thesis summary: {thesis.summary}
+
+Argue both sides. Reply JSON only: {{"bull": one sentence, "bear": one sentence, "lean": one of bull/bear/balanced}}."""
+    raw = LLMAdapter().fetch(
+        prompt,
+        system="You are a balanced analyst arguing both sides.",
+        max_tokens=250,
+    )
+    if not raw:
+        return DebateView(bull="", bear="", lean="balanced")
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return DebateView(bull="", bear="", lean="balanced")
+
+    return DebateView(
+        bull=data.get("bull", ""),
+        bear=data.get("bear", ""),
+        lean=str(data.get("lean", "balanced")).lower(),
+    )
+
+
+def lens_trader(stance_action: str, position: Position, risk_flags: list[Signal]) -> SizeView:
+    sizes = {
+        "buy": "5%",
+        "add": "+2%",
+        "hold": "hold",
+        "trim": "-half",
+        "sell": "exit",
+    }
+    action = stance_action.lower()
+    size = sizes.get(action, "hold")
+
+    for flag in risk_flags:
+        if flag.summary.startswith("CAP:") and position.name_ref in flag.subject_ref:
+            if action in {"buy", "add"}:
+                return SizeView(
+                    size="no add — risk cap",
+                    capped=True,
+                    reason=flag.summary,
+                )
+            return SizeView(size=size, capped=True, reason=flag.summary)
+
+    return SizeView(size=size, capped=False, reason="")
