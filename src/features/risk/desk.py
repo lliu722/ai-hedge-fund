@@ -90,7 +90,19 @@ def run_risk_sweep(positions: list[Position]) -> list[Signal]:
 def vet_decision(rec: Recommendation, positions: list[Position]) -> Signal:
     market_values = _market_values(positions)
     total = sum(market_values.values())
-    weight = (market_values.get(rec.name_ref, 0) / total * 100) if total else 0.0
+
+    # No price data → cannot assess. Never return a false "within limits" green
+    # (Risk Watch spec §7/§9: flag, never suppress).
+    if not total:
+        return Signal(
+            type=SignalType.DATA,
+            subject_ref=rec.name_ref,
+            severity=3,
+            summary=f"could not assess {rec.name_ref} — price data unavailable, no cap verdict",
+            source_desk="risk_watch",
+        )
+
+    weight = market_values.get(rec.name_ref, 0) / total * 100
 
     if rec.action in {Action.BUY, Action.ADD} and weight > 10:
         return Signal(
