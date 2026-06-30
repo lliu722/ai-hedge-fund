@@ -1,9 +1,32 @@
 # 工作日志 · AI Investment System — Build Log (Status Tracker)
 
-> Companion to **`BLUEPRINT.md` (图纸)**. The blueprint says *what the system is*; this log says *where each piece is*.
+> Architecture: **`src/desks/MASTER.md`**. This log says *where each piece is + what's next*.
 > **Rule:** after every change, update the matching line here (status + location), and add a line to the Decision Log.
 > Status key: ✅ done · 🟡 partial · 🔴 not built · ⏸ parked · 🔁 needs migration onto new model
-> Last updated: 2026-06-29
+> Last updated: 2026-06-30
+
+> **⚠️ 2026-06-30 — two pivots happened. Read before trusting old paths below:**
+> 1. **大清理:** dead code moved out of `src/`. Any `src/core|features|adapters|services/...`
+>    path in entries below now lives under **`legacy/superseded/`**; any `src/agents/...`
+>    under **`legacy/fork/`**. The live bot (`src/tools/`) is unchanged. See `legacy/README.md`.
+> 2. **Model pivot:** the 6-desk "Spine" model (entries before 2026-06-30) was superseded by the
+>    **asset-class desk model** (`src/desks/`). Old-model docs are in `docs/archive/`. Those entries
+>    are kept as history; the active backlog is the asset-class desks.
+
+---
+
+## CURRENT SPRINT — asset-class desk model (strangler; bot stays live)
+Build order: `equity_ls` → `quant` (signal service) → `macro` → `pm_risk` → remaining desks.
+Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `src/desks/MASTER.md`.
+
+- ✅ Desk foundation: `IdeaCard` contract + `Desk` base + registry (`src/desks/base.py`, `contracts.py`, `registry.py`)
+- ✅ **equity_ls B1** — universe filter + tier tag (`TickerMeta`) + SQLite exclusion DB (`src/desks/equity_ls/infrastructure/universe.py`, `exclusion_db.py`)
+- ✅ **equity_ls B2** — 8-section data layer, yfinance + OpenBB cross-check (`src/desks/equity_ls/infrastructure/data_sources.py`)
+- 🔴 equity_ls B3 (portfolio DB) · B4 (knowledge base) · B5 (TradingAgents) · then A1–A5 · then C
+
+---
+
+## ARCHIVE — prior 6-desk "Spine" model (superseded 2026-06-30, kept as history)
 
 ---
 

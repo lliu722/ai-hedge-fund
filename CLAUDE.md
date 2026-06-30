@@ -8,18 +8,15 @@ the @import above pulls them in for Claude Code, which does not read AGENTS.md n
 One source of truth, no drift. Put ONLY Claude-specific notes below.
 -->
 
-## Architecture: Desks (asset-class model — being adopted)
-The system is being migrated to the asset-class desk model. Canonical definition: `docs/DESKS.md` —
-read it before touching any desk logic. Key rules:
+## Architecture: the asset-class desk model
+Canonical spec: `src/desks/MASTER.md` (map) + `src/desks/DESKS.md` (detail). Read before touching desk logic.
 - 8 idea-generating desks + 1 PM/Risk orchestrator (`pm_risk`).
-- Every desk implements the shared Desk Contract (`src/desks/base.py`) and emits `IdeaCard`s (`src/desks/contracts.py`).
-- Only `pm_risk` sets position size / weight / allocation. Desks never size.
-- Surgical patches; commit per change; log decisions to the Notion Architecture & Decision Log;
-  update `docs/DESKS.md` in the same change when scope or contract changes.
-- **Strangler migration in progress:** new `src/desks/` package runs ALONGSIDE the live bot + the
-  prior 6 function-desks (`src/features/`, `src/core/objects.py`). Do NOT delete the old model until
-  the new one is proven and cutover is explicitly approved.
+- Every desk extends the Desk Contract (`src/desks/base.py`) and emits `IdeaCard`s (`src/desks/contracts.py`).
+- Only `pm_risk` sets size / weight / allocation. Desks never size.
+- Update `src/desks/MASTER.md` (and the desk's `spec/`) in the same change when scope or contract changes.
+- **Strangler migration:** `src/desks/` runs ALONGSIDE the live bot (`src/tools/`). Do NOT cut over until proven + approved.
 
 ## Claude Code notes
-- Detailed specs load on demand: `docs/DESKS.md` (active model), `docs/BLUEPRINT.md` + `docs/desks/*.md` (prior 6-desk model, superseded but not yet retired), `docs/BUILD_LOG.md`.
-- Keep this file and AGENTS.md lean; heavy detail belongs in `docs/`, not here.
+- New work lives in `src/desks/`. The live bot is `src/tools/`. `legacy/` is read-only reference — never import from it (copy + rewire).
+- Detail loads on demand: `src/desks/DESKS.md`, per-desk `spec/`, `docs/BUILD_LOG.md`.
+- Keep this file and AGENTS.md lean; heavy detail belongs in `src/desks/` specs, not here.

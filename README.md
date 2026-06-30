@@ -1,42 +1,36 @@
 # AI Investment System
 
-A personal multi-asset investment office that runs 24/7 as a Telegram bot — it monitors markets, researches names, forms buy/sell views, watches risk, and reviews its own decisions. Built as a small team of standing AI "desks" running an investment process.
+A personal multi-asset investment office that runs 24/7 as a Telegram bot — it monitors markets, researches names, forms buy/sell views, watches risk, and reviews its own decisions. Built as a set of standing AI "desks" running an investment process.
 
 ## Read order
-1. **`docs/BLUEPRINT.md`** (图纸) — the architecture: what the system is and how it fits together.
-2. **`docs/BUILD_LOG.md`** (工作日志) — what's built, what's not, and what's in the current sprint.
-3. **`docs/desks/`** — one operations manual per desk (start with `coverage_analyst.md`).
+1. **`ONBOARDING.md`** — orientation. Start here.
+2. **`AGENTS.md`** — canonical working rules + repo layout.
+3. **`src/desks/MASTER.md`** — the architecture: 9 desks (8 idea desks + `pm_risk`).
+4. **`docs/BUILD_LOG.md`** (工作日志) — what's built, what's next, the current sprint.
 
 ## How the AI agents pick this up (cross-tool)
 This repo works with Claude Code, Codex, Cursor, and a human, off **one source of truth**:
-
-- **`AGENTS.md`** — canonical agent instructions. Read natively by Codex, Cursor, Copilot, Gemini CLI, etc.
-- **`CLAUDE.md`** — a thin shim that imports `AGENTS.md` (Claude Code does not read AGENTS.md natively, so it reads CLAUDE.md, which pulls in AGENTS.md). No duplication, no drift.
-- Heavy detail (architecture, desk specs) lives in `docs/` and is loaded on demand — the steering files stay lean on purpose.
+- **`AGENTS.md`** — canonical instructions. Read natively by Codex, Cursor, Copilot, Gemini CLI, etc.
+- **`CLAUDE.md`** — a thin shim that imports `AGENTS.md` (Claude Code doesn't read AGENTS.md natively).
 
 > If you ever edit the rules, edit **`AGENTS.md`** only. `CLAUDE.md` just imports it.
 
 ## Folder layout
 ```
 .
-├── ONBOARDING.md       ← read this first
-├── README.md            ← you are here (human front door)
-├── AGENTS.md            ← canonical agent rules (Codex/Cursor/…)
-├── CLAUDE.md            ← shim: @AGENTS.md  (Claude Code)
-├── WORK_ORDER.md        ← active work order for AI agents
-├── docs/
-│   ├── BLUEPRINT.md     ← 图纸 — architecture (source of truth)
-│   ├── BUILD_LOG.md     ← 工作日志 — status + sprint
-│   └── desks/
-│       ├── _TEMPLATE.md         ← desk spec template
-│       ├── coverage_analyst.md  ← ✅ first deep spec
-│       ├── research_librarian.md   (todo)
-│       ├── idea_scout.md           (todo)
-│       ├── house_view.md           (todo)
-│       ├── quant_engine.md         (todo)
-│       └── risk_watch.md           (todo)
-└── src/                 ← code (handlers / features / services / adapters / delivery / core)
+├── ONBOARDING.md   ← read this first
+├── README.md       ← you are here (human front door)
+├── AGENTS.md       ← canonical rules + repo layout
+├── CLAUDE.md       ← shim: @AGENTS.md (Claude Code)
+├── src/
+│   ├── tools/      🟢 LIVE bot (Railway runs this)
+│   ├── data/       🟢 live-adjacent data
+│   └── desks/      🔵 NEW desk model (MASTER.md · DESKS.md · base.py · contracts.py · <desk>/)
+├── legacy/         ⚪🟠 frozen reference (fork + superseded) — never import
+└── docs/
+    ├── BUILD_LOG.md  ← status + decision log
+    └── archive/      ← old WORK_ORDERs + prior 6-desk-model docs
 ```
 
 ## Working rules (full list in AGENTS.md)
-Surgical patches · commit after each change · update the build log + decision log · dependency direction inward · declared failure policies · never break the live bot.
+Surgical patches · commit after each change · update the build log + decision log · desks never size (only `pm_risk` does) · never import from `legacy/` · never break the live bot.
