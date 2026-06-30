@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.desks.equity_ls.infrastructure import exclusion_db
+from src.desks.equity_ls.infrastructure.b1_universe import exclusion_db
 
 # ── Eligible region suffixes ──────────────────────────────────────────────────
 
@@ -132,12 +132,12 @@ def _assign_tier(ticker: str) -> int:
 
 
 def _is_holding(ticker: str) -> bool:
-    from src.desks.equity_ls.infrastructure import portfolio_db
+    from src.desks.equity_ls.infrastructure.b3_portfolio import portfolio_db
     return portfolio_db.is_holding(ticker)
 
 
 def _is_watchlist(ticker: str) -> bool:
-    from src.desks.equity_ls.infrastructure import portfolio_db
+    from src.desks.equity_ls.infrastructure.b3_portfolio import portfolio_db
     return portfolio_db.is_watchlist(ticker)
 
 

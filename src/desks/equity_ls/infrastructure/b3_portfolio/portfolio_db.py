@@ -18,7 +18,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-_DB_PATH = Path(__file__).parent.parent / "data" / "portfolio.db"
+_DB_PATH = Path(__file__).parent.parent.parent / "data" / "portfolio.db"
 
 
 def _connect() -> sqlite3.Connection:
