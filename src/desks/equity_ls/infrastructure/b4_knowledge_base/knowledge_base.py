@@ -248,6 +248,121 @@ def get_latest_agent_output(ticker: str, agent_name: str | None = None) -> dict 
 
 # ── Summary helper ────────────────────────────────────────────────────────────
 
+# ── PDF ingestion ─────────────────────────────────────────────────────────────
+#
+# Drop PDFs into:  src/desks/equity_ls/infrastructure/b4_knowledge_base/pdf_inbox/
+#
+# Naming convention (used to auto-fill ticker + type if not passed explicitly):
+#   NVDA_deep_dive_2025Q2.pdf   →  ticker=NVDA, type=deep_dive
+#   TSMC_earnings_note.pdf      →  ticker=TSMC, type=earnings_note
+#   anything_else.pdf           →  ticker=UNKNOWN, type=other  (override manually)
+#
+# After ingestion the PDF stays in pdf_inbox/ — we never delete source files.
+
+_PDF_INBOX = Path(__file__).parent / "pdf_inbox"
+
+_TYPE_KEYWORDS = {
+    "deep_dive": "deep_dive",
+    "deepdive": "deep_dive",
+    "earnings": "earnings_note",
+    "earnings_note": "earnings_note",
+    "valuation": "valuation_note",
+    "trade_review": "trade_review",
+    "review": "trade_review",
+}
+
+
+def _parse_pdf_filename(path: Path) -> tuple[str, str]:
+    """Best-effort ticker + report_type from filename. Returns (ticker, report_type)."""
+    stem = path.stem  # e.g. "NVDA_deep_dive_2025Q2"
+    parts = stem.lower().split("_")
+    ticker = parts[0].upper() if parts else "UNKNOWN"
+    report_type = "other"
+    # Check single parts and adjacent pairs (handles "deep_dive", "trade_review")
+    candidates = parts[1:] + ["_".join(parts[i:i+2]) for i in range(1, len(parts) - 1)]
+    for candidate in candidates:
+        if candidate in _TYPE_KEYWORDS:
+            report_type = _TYPE_KEYWORDS[candidate]
+            break
+    return ticker, report_type
+
+
+def ingest_pdf(
+    path: str | Path,
+    ticker: str | None = None,
+    report_type: str | None = None,
+    title: str | None = None,
+    source: str = "pdf_import",
+) -> int:
+    """
+    Extract text from a PDF and store as a report in the KB.
+    ticker / report_type / title are inferred from the filename if not provided.
+    Returns the new report id.
+    """
+    import pdfplumber
+
+    path = Path(path)
+    inferred_ticker, inferred_type = _parse_pdf_filename(path)
+
+    ticker = ticker or inferred_ticker
+    report_type = report_type or inferred_type
+    title = title or path.stem.replace("_", " ")
+
+    pages: list[str] = []
+    with pdfplumber.open(path) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                pages.append(text)
+
+    body = "\n\n".join(pages).strip()
+    if not body:
+        raise ValueError(f"No extractable text found in {path.name}")
+
+    return add_report(ticker, report_type, title, body, source=source)
+
+
+def ingest_all_pdfs(
+    inbox: str | Path | None = None,
+    skip_existing: bool = True,
+) -> list[dict]:
+    """
+    Process every PDF in pdf_inbox/ (or a custom folder).
+    Returns a list of {file, ticker, report_type, report_id} for each ingested file.
+    If skip_existing=True, files whose stem already has a matching title are skipped.
+    """
+    inbox = Path(inbox) if inbox else _PDF_INBOX
+    results = []
+
+    for pdf_path in sorted(inbox.glob("*.pdf")):
+        inferred_ticker, inferred_type = _parse_pdf_filename(pdf_path)
+        title = pdf_path.stem.replace("_", " ")
+
+        if skip_existing:
+            with _connect() as conn:
+                exists = conn.execute(
+                    "SELECT 1 FROM reports WHERE ticker=? AND title=?",
+                    (inferred_ticker, title),
+                ).fetchone()
+            if exists:
+                results.append({"file": pdf_path.name, "status": "skipped (already ingested)"})
+                continue
+
+        try:
+            report_id = ingest_pdf(pdf_path)
+            results.append({
+                "file": pdf_path.name,
+                "ticker": inferred_ticker,
+                "report_type": inferred_type,
+                "report_id": report_id,
+                "status": "ok",
+            })
+        except Exception as e:
+            results.append({"file": pdf_path.name, "status": f"error: {e}"})
+
+    return results
+
+
 def get_kb_summary(ticker: str) -> dict:
     """
     Quick summary of everything KB knows about a ticker.
