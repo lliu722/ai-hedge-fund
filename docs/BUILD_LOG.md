@@ -39,7 +39,7 @@
 - ✅ Conviction + sizing (size_position)
 - ✅ 腾位置 / portfolio advisor
 - ✅ Entry points (tiered)
-- ✅ House-view formation (personas) — 🔁 to migrate onto multi-source modules
+- 🟡 House-view formation — synthesize_view built on desk model; orchestrator not yet wired
 - ✅ Quant screen / optimise / backtest (V3 Quant, 6 tools)
 
 ### Monitoring
@@ -93,6 +93,7 @@
 
 ## DECISION LOG (newest first)
 
+- **2026-06-29** — House View synthesize_view: persona direction avg + debate lean + quant tiebreak → Action; conviction from agreement; size from trader lens (risk-capped); disagreement surfaced · `src/features/house_view/synthesize.py`
 - **2026-06-29** — House View lens B (bull/bear debate, JSON, degrade balanced) + lens C (trader sizing rule, honours risk CAP as hard constraint, no size_position import) · `src/features/house_view/lenses.py`
 - **2026-06-29** — House View lens A: persona panel via LLMAdapter + recommendations.py prompts → 4 PersonaCalls (JSON), degrade to hold/Low · `src/features/house_view/lenses.py`
 - **2026-06-29** — Added House View desk-local types (PersonaCall, DebateView, SizeView) · `src/features/house_view/types.py`
