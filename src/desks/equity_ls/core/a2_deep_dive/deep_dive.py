@@ -73,13 +73,13 @@ def _gate(ticker: str) -> tuple[bool, int | None, str]:
 
 def _run_screening(ticker: str, tier: int):
     """Run the full 6-step screener. Returns ScreeningResult."""
-    from src.desks.equity_ls.core.a2_deep_dive import screener
+    from src.desks.equity_ls.core.screener import screener
     return screener.run(ticker, tier=tier)
 
 
 def _format_screening_for_prompt(sr) -> str:
     """Format ScreeningResult into LLM-ready block."""
-    from src.desks.equity_ls.core.a2_deep_dive import screener
+    from src.desks.equity_ls.core.screener import screener
     return screener.format_for_prompt(sr)
 
 
