@@ -14,20 +14,15 @@ All intermediate outputs and the final report are saved to B4 (knowledge_base).
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from langchain_deepseek import ChatDeepSeek
+from src.desks.equity_ls.infrastructure.llm import get_llm as _llm
 
 
 # ── Output types ──────────────────────────────────────────────────────────────
 
 VERDICTS = {"Long", "Avoid", "Monitor", "Trim", "Sell", "Dig further", "Add to watchlist"}
-
-EXPRESSION_TYPES = {
-    "single_stock", "etf", "pair_trade", "basket", "option", "avoid"
-}
 
 
 @dataclass
@@ -43,21 +38,12 @@ class DeepDiveResult:
     desk_conclusion: str = ""
     valuation_view: str = ""
     trade_expression: str = ""
-    verdict: str = ""                                           # one of VERDICTS
+    verdict: str = ""          # canonical — one of VERDICTS ("" if unparseable)
+    verdict_detail: str = ""   # full verdict text incl. rationale
 
     # KB report id
     report_id: int | None = None
     errors: dict = field(default_factory=dict)
-
-
-# ── LLM ──────────────────────────────────────────────────────────────────────
-
-def _llm(temperature: float = 0.2) -> ChatDeepSeek:
-    return ChatDeepSeek(
-        model="deepseek-chat",
-        api_key=os.getenv("DEEPSEEK_API_KEY", ""),
-        temperature=temperature,
-    )
 
 
 # ── Step 1: Universe gate ─────────────────────────────────────────────────────
@@ -182,8 +168,16 @@ _SECTOR_FALLBACK: dict[str, list[str]] = {
 def _get_peer_comparison(ticker: str, sector: str) -> str:
     """
     Fetch real multiples for peers and format a comparison table.
-    Returns a markdown-style table string for injection into the valuation prompt.
+    Returns a table string for the valuation prompt; never raises —
+    a peer-data failure must not sink the whole deep dive.
     """
+    try:
+        return _build_peer_table(ticker, sector)
+    except Exception as e:
+        return f"[Peer comparison unavailable: {e}]"
+
+
+def _build_peer_table(ticker: str, sector: str) -> str:
     from src.desks.equity_ls.infrastructure.b2_data_source.data_sources import get_market_data
     from concurrent.futures import ThreadPoolExecutor
 
@@ -197,7 +191,7 @@ def _get_peer_comparison(ticker: str, sector: str) -> str:
         return t, get_market_data(t)
 
     with ThreadPoolExecutor(max_workers=6) as ex:
-        results = dict(ex.map(lambda t: fetch(t), all_tickers))
+        results = dict(ex.map(fetch, all_tickers))
 
     def _fmt(val, fmt=".1f", suffix=""):
         if val is None:
@@ -311,11 +305,25 @@ Recommend:
 
 # ── Step 7: Final verdict ─────────────────────────────────────────────────────
 
+def _parse_verdict(text: str) -> str:
+    """Extract the canonical verdict from LLM output. Checks the first line,
+    then the whole text. Returns "" if nothing matches (caller treats as
+    non-actionable rather than inventing a stance)."""
+    lines = text.strip().split("\n")
+    # Longest names first so "Add to watchlist" wins over any embedded "Long" etc.
+    ordered = sorted(VERDICTS, key=len, reverse=True)
+    for scope in (lines[0], text):
+        for v in ordered:
+            if v.lower() in scope.lower():
+                return v
+    return ""
+
+
 def _run_verdict(
     desk_conclusion: str,
     valuation_view: str,
     trade_expression: str,
-) -> str:
+) -> tuple[str, str]:
     prompt = f"""Based on the three outputs below, give a single final verdict for the Equity L/S desk.
 
 DESK CONCLUSION:
@@ -344,14 +352,9 @@ Definitions:
     try:
         resp = _llm(temperature=0.1).invoke(prompt)
         text = resp.content.strip()
-        # Extract verdict from first line
-        first_line = text.split("\n")[0].strip()
-        for v in VERDICTS:
-            if v.lower() in first_line.lower():
-                return text
-        return text  # return as-is if no clean match
+        return _parse_verdict(text), text
     except Exception as e:
-        return f"[Verdict error: {e}]"
+        return "", f"[Verdict error: {e}]"
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
@@ -386,6 +389,7 @@ def run(
     in_scope, tier, reason = _gate(ticker)
     if not in_scope:
         result.verdict = "Avoid"
+        result.verdict_detail = f"Out of universe: {reason}"
         result.errors["gate"] = f"Out of universe: {reason}"
         print(f"[A2] REJECTED by universe gate: {reason}")
         return result
@@ -407,6 +411,7 @@ def run(
     # Hard filter fail inside screener (different from universe gate)
     if not sr.hard_pass:
         result.verdict = "Avoid"
+        result.verdict_detail = f"Failed hard filter: {sr.hard_fail_reason}"
         result.errors["screener"] = sr.hard_fail_reason
         print(f"[A2] Hard filter failed: {sr.hard_fail_reason}")
         return result
@@ -446,8 +451,10 @@ def run(
 
     # ── 7. Verdict ────────────────────────────────────────────────────────────
     print("[A2] Producing verdict...")
-    result.verdict = _run_verdict(result.desk_conclusion, result.valuation_view, result.trade_expression)
-    print(f"[A2] Verdict: {result.verdict.split(chr(10))[0]}")
+    result.verdict, result.verdict_detail = _run_verdict(
+        result.desk_conclusion, result.valuation_view, result.trade_expression
+    )
+    print(f"[A2] Verdict: {result.verdict or '(unparsed)'}")
 
     # ── Save full report to B4 ────────────────────────────────────────────────
     if save_to_kb:
@@ -460,7 +467,7 @@ def run(
                 f"## Desk Conclusion\n{result.desk_conclusion}\n\n"
                 f"## Valuation / Upside-Downside\n{result.valuation_view}\n\n"
                 f"## Trade Expression\n{result.trade_expression}\n\n"
-                f"## Verdict\n{result.verdict}"
+                f"## Verdict\n{result.verdict_detail}"
             )
             result.report_id = kb.add_report(
                 ticker,

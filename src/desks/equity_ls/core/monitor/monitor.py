@@ -2,7 +2,8 @@
 Market Monitor — the daily orchestration loop for the Equity L/S desk.
 
 Runs on a schedule (daily cron via Railway). For each name in the universe:
-  1. Checks tier cadence — is a score refresh due? (screener/cadence.py)
+  1. Checks tier cadence — is a score refresh due? (screener/cadence.py,
+     tracked per ticker in a small monitor_state SQLite DB)
   2. If yes, runs the screener (Steps 1–6, fast, no LLM)
   3. Evaluates result — should this escalate to a full A2 deep dive?
   4. If yes, triggers A2 (B5 TradingAgents + desk conclusion + verdict)
@@ -10,18 +11,73 @@ Runs on a schedule (daily cron via Railway). For each name in the universe:
 
 Tier sources:
   T0 / T1 — portfolio_db holdings + watchlist (B3)
-  T2       — hardcoded sector leaders in universe.py (B1)
+  T2       — universe.get_sector_leaders() (B1)
   T3 / T4  — added dynamically by A1 Theme Discovery (not yet built)
 
+The daily price/news check part of the T0/T1 cadence is future work — this
+module currently covers the score-refresh + escalation loop.
+
 Entry points:
-  run_daily()     — main cron entry; call from Railway scheduler
+  run_daily()        — main cron entry; call from Railway scheduler
   run_ticker(ticker) — single-name check (for manual triggers / testing)
 """
 from __future__ import annotations
 
+import sqlite3
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
+_STATE_DB = Path(__file__).parent.parent.parent / "data" / "monitor_state.db"
+
+_NEVER_RUN = 10_000  # days-since value for names with no recorded run
+
+
+# ── Last-run state (per-ticker screener history) ─────────────────────────────
+
+@contextmanager
+def _state_db():
+    conn = sqlite3.connect(_STATE_DB)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS last_screen (
+            ticker   TEXT PRIMARY KEY,
+            last_run TEXT NOT NULL   -- YYYY-MM-DD
+        )
+    """)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
+def _days_since_last_run(ticker: str) -> int:
+    with _state_db() as conn:
+        row = conn.execute(
+            "SELECT last_run FROM last_screen WHERE ticker = ?", (ticker.upper(),)
+        ).fetchone()
+    if not row:
+        return _NEVER_RUN
+    try:
+        last = datetime.strptime(row[0], "%Y-%m-%d")
+        return (datetime.now() - last).days
+    except ValueError:
+        return _NEVER_RUN
+
+
+def _mark_run(ticker: str) -> None:
+    with _state_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO last_screen (ticker, last_run) VALUES (?, ?)
+            ON CONFLICT(ticker) DO UPDATE SET last_run = excluded.last_run
+            """,
+            (ticker.upper(), datetime.now().strftime("%Y-%m-%d")),
+        )
+
+
+# ── Result type ───────────────────────────────────────────────────────────────
 
 @dataclass
 class MonitorResult:
@@ -30,12 +86,14 @@ class MonitorResult:
     score: float | None = None
     classification: str = ""
     deep_dive_triggered: bool = False
-    verdict: str = ""
+    verdict: str = ""          # canonical A2 verdict ("" if no deep dive ran)
     alert_sent: bool = False
     skipped: bool = False
     skip_reason: str = ""
     errors: dict = field(default_factory=dict)
 
+
+# ── Single-name check ─────────────────────────────────────────────────────────
 
 def run_ticker(
     ticker: str,
@@ -43,13 +101,8 @@ def run_ticker(
     send_alert: bool = True,
 ) -> MonitorResult:
     """
-    Run a single-name monitor check.
-
-    1. Universe gate + tier
-    2. Cadence check — due for a refresh?
-    3. Screener (Steps 1–6)
-    4. Escalate to A2 deep dive if warranted
-    5. Telegram alert if verdict is actionable
+    Run a single-name monitor check: universe gate → screener → escalate to
+    A2 deep dive if warranted → Telegram alert if the verdict is actionable.
     """
     from src.desks.equity_ls.infrastructure.b1_universe.universe import check as universe_check
     from src.desks.equity_ls.core.screener import screener as s
@@ -73,6 +126,7 @@ def run_ticker(
         sr = s.run(ticker, tier=tier)
         result.score = sr.composite_score
         result.classification = sr.classification
+        _mark_run(ticker)
 
         if not sr.hard_pass:
             result.skipped = True
@@ -85,11 +139,9 @@ def run_ticker(
         print(f"[Monitor] {ticker} screener error: {e}")
         return result
 
-    # ── Detect major events (earnings proximity, news spike) ──────────────────
+    # ── Major events (earnings within a week) ─────────────────────────────────
     days_to_earn = sr.raw.get("days_to_earnings")
-    has_major_event = (
-        days_to_earn is not None and 0 <= days_to_earn <= 7
-    )
+    has_major_event = days_to_earn is not None and 0 <= days_to_earn <= 7
 
     # ── Escalate to A2 deep dive? ─────────────────────────────────────────────
     escalate = force_deep_dive or should_trigger_deep_dive(
@@ -106,11 +158,9 @@ def run_ticker(
         except Exception as e:
             result.errors["deep_dive"] = str(e)
             print(f"[Monitor] {ticker} deep dive error: {e}")
-    else:
-        result.verdict = ""  # no actionable output yet
 
-    # ── Telegram alert ────────────────────────────────────────────────────────
-    if send_alert and result.verdict and result.verdict not in ("Monitor", ""):
+    # ── Telegram alert for actionable verdicts ────────────────────────────────
+    if send_alert and result.verdict and result.verdict != "Monitor":
         try:
             _send_alert(ticker, tier, result.score, result.verdict, sr)
             result.alert_sent = True
@@ -120,64 +170,52 @@ def run_ticker(
     return result
 
 
+# ── Daily loop ────────────────────────────────────────────────────────────────
+
 def run_daily(send_alerts: bool = True) -> list[MonitorResult]:
     """
-    Daily monitor run across all universe names due for a refresh.
-
-    Pulls T0/T1 from portfolio_db, T2 from universe hardcoded list.
-    T3/T4 added when A1 Theme Discovery is built.
+    Daily monitor run across all universe names due for a refresh per their
+    tier cadence. Last run per ticker is tracked in monitor_state.db, so a
+    weekly-cadence name runs on whichever day it becomes due.
     """
     from src.desks.equity_ls.infrastructure.b3_portfolio.portfolio_db import (
         get_holdings, get_watchlist,
     )
-    from src.desks.equity_ls.infrastructure.b1_universe.universe import _T2_SECTOR_LEADERS
-    from src.desks.equity_ls.core.screener.cadence import get_cadence, should_run_score_refresh
+    from src.desks.equity_ls.infrastructure.b1_universe.universe import get_sector_leaders
+    from src.desks.equity_ls.core.screener.cadence import should_run_score_refresh
 
-    today = datetime.now()
-    results: list[MonitorResult] = []
-
-    # Build the run list: (ticker, tier, days_since_last_run)
-    run_list: list[tuple[str, int, int]] = []
-
-    # T0 — holdings (always due if daily cadence)
-    for h in get_holdings():
-        run_list.append((h["ticker"], 0, 1))  # treat as 1 day since last run → always runs
-
-    # T1 — watchlist
+    # Build the run list: highest tier wins when a name appears in several sources
+    tiers: dict[str, int] = {}
+    for t in get_sector_leaders():
+        tiers[t.upper()] = 2
     for w in get_watchlist():
-        if w["ticker"] not in [r[0] for r in run_list]:
-            run_list.append((w["ticker"], 1, 1))
+        tiers[w["ticker"].upper()] = 1
+    for h in get_holdings():
+        tiers[h["ticker"].upper()] = 0
 
-    # T2 — sector leaders (weekly cadence; use day of week to stagger)
-    if today.weekday() == 0:  # Monday
-        for ticker in _T2_SECTOR_LEADERS:
-            if ticker not in [r[0] for r in run_list]:
-                run_list.append((ticker, 2, 7))
+    print(f"[Monitor] Daily run: {len(tiers)} names in scope")
 
-    print(f"[Monitor] Daily run: {len(run_list)} names")
-
-    for ticker, tier, days_since in run_list:
-        cadence = get_cadence(tier)
+    results: list[MonitorResult] = []
+    for ticker, tier in sorted(tiers.items(), key=lambda kv: kv[1]):
+        days_since = _days_since_last_run(ticker)
         if not should_run_score_refresh(tier, days_since):
             results.append(MonitorResult(
                 ticker=ticker, tier=tier, skipped=True,
-                skip_reason="Not due per cadence",
+                skip_reason=f"Not due (last run {days_since}d ago)",
             ))
             continue
         try:
-            r = run_ticker(ticker, send_alert=send_alerts)
-            results.append(r)
+            results.append(run_ticker(ticker, send_alert=send_alerts))
         except Exception as e:
             results.append(MonitorResult(
-                ticker=ticker, tier=tier,
-                errors={"run_ticker": str(e)},
+                ticker=ticker, tier=tier, errors={"run_ticker": str(e)},
             ))
 
-    # Summary
+    checked    = [r for r in results if not r.skipped]
     triggered  = [r for r in results if r.deep_dive_triggered]
-    actionable = [r for r in results if r.verdict and r.verdict not in ("", "Monitor")]
+    actionable = [r for r in results if r.verdict and r.verdict != "Monitor"]
     print(
-        f"[Monitor] Done. Checked: {len(results)} | "
+        f"[Monitor] Done. Screened: {len(checked)}/{len(results)} | "
         f"Deep dives: {len(triggered)} | Actionable: {len(actionable)}"
     )
     return results
@@ -185,9 +223,11 @@ def run_daily(send_alerts: bool = True) -> list[MonitorResult]:
 
 # ── Telegram alert ────────────────────────────────────────────────────────────
 
-def _send_alert(ticker: str, tier: int, score: float, verdict: str, sr) -> None:
-    """Send a Telegram alert for an actionable verdict."""
-    import os, requests
+def _send_alert(ticker: str, tier: int, score: float | None, verdict: str, sr) -> None:
+    """Send a plain-text Telegram alert (no parse_mode — ticker/classification
+    text can contain characters that break Markdown parsing)."""
+    import os
+    import requests
 
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     chat_id   = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -201,16 +241,17 @@ def _send_alert(ticker: str, tier: int, score: float, verdict: str, sr) -> None:
         "Trim": "✂️", "Sell": "🔴", "Avoid": "⛔", "Dig further": "🔍",
     }.get(verdict, "📊")
 
+    score_txt = f"{score:.1f}" if score is not None else "?"
     msg = (
-        f"{verdict_emoji} *Equity L/S Monitor — {ticker}*\n"
-        f"Tier: {tier_label} | Score: {score:.1f}/100\n"
+        f"{verdict_emoji} Equity L/S Monitor — {ticker}\n"
+        f"Tier: {tier_label} | Score: {score_txt}/100\n"
         f"Classification: {sr.classification}\n"
-        f"*Verdict: {verdict}*\n"
+        f"Verdict: {verdict}\n"
         f"Sector: {sr.sector} | {sr.industry}"
     )
 
     requests.post(
         f"https://api.telegram.org/bot{bot_token}/sendMessage",
-        json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"},
+        json={"chat_id": chat_id, "text": msg},
         timeout=10,
     )

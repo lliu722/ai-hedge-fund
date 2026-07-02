@@ -60,18 +60,11 @@ def get_cadence(tier: int) -> dict:
 
 
 def should_run_score_refresh(tier: int, days_since_last_run: int) -> bool:
-    """Return True if a score refresh is due based on tier cadence."""
-    cadence = get_cadence(tier)
-    freq = cadence["score_refresh"]
-    if freq == "daily":
-        return days_since_last_run >= 1
-    elif freq == "weekly":
-        return days_since_last_run >= 7
-    elif freq == "biweekly":
-        return days_since_last_run >= 14
-    elif freq == "initial_only":
-        return days_since_last_run < 0  # never auto-refresh (negative = never true)
-    return False
+    """Return True if a score refresh is due based on tier cadence.
+    'initial_only' (T4) and 'none' never auto-refresh."""
+    freq = get_cadence(tier)["score_refresh"]
+    interval = {"daily": 1, "weekly": 7, "biweekly": 14}.get(freq)
+    return interval is not None and days_since_last_run >= interval
 
 
 def should_trigger_deep_dive(tier: int, score: float, has_major_event: bool = False) -> bool:

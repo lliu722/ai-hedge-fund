@@ -14,8 +14,9 @@ screening context block.
 """
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 import yfinance as yf
@@ -115,9 +116,11 @@ class ScreeningResult:
 # ── Price history helper ──────────────────────────────────────────────────────
 
 def _price_returns(ticker: str) -> dict:
-    """Fetch 1y of daily closes and compute returns at multiple horizons."""
+    """Fetch 2y of daily closes and compute returns at multiple horizons.
+    (2y, not 1y — the 252-day return needs 253 rows and a 1y fetch only has ~250,
+    which silently disabled the 12-1 momentum signal.)"""
     try:
-        hist = yf.Ticker(ticker).history(period="1y")
+        hist = yf.Ticker(ticker).history(period="2y")
         if hist.empty:
             return {}
         closes = hist["Close"].dropna()
@@ -131,7 +134,7 @@ def _price_returns(ticker: str) -> dict:
 
         ma50  = round(closes.tail(50).mean(), 4)  if len(closes) >= 50  else None
         ma200 = round(closes.tail(200).mean(), 4) if len(closes) >= 200 else None
-        high52 = float(closes.max())
+        high52 = float(closes.tail(252).max())  # 52-week high, not full-fetch high
         price  = float(closes.iloc[-1])
 
         return {
@@ -152,8 +155,10 @@ def _price_returns(ticker: str) -> dict:
         return {}
 
 
+@functools.lru_cache(maxsize=64)
 def _etf_return(etf: str, n_days: int = 63) -> Optional[float]:
-    """Return n-day return for an ETF."""
+    """n-day return for an ETF. Cached per process — a monitor run over 100+
+    names would otherwise refetch SPY and each sector ETF once per ticker."""
     try:
         hist = yf.Ticker(etf).history(period="6mo")["Close"].dropna()
         if len(hist) >= n_days + 1:
@@ -739,13 +744,14 @@ def run(ticker: str, tier: int = 4) -> ScreeningResult:
         result.hard_fail_reason = f"Data fetch failed: {md['_error']}"
         return result
 
-    result.raw = md
+    # Keep raw lean: drop private keys (_quarterly_* hold whole DataFrames)
+    result.raw = {k: v for k, v in md.items() if not k.startswith("_")}
 
     # Earnings proximity
     days_to_earnings: Optional[int] = None
     try:
         earn = get_earnings_dates(ticker)
-        ned = earn.get("next_earnings_date")
+        ned = earn.get("earnings_date")
         if ned:
             days_to_earnings = (datetime.strptime(str(ned)[:10], "%Y-%m-%d") - datetime.now()).days
             result.raw["next_earnings"] = str(ned)
