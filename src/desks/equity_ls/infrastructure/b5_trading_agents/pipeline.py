@@ -20,22 +20,12 @@ https://github.com/TauricResearch/TradingAgents
 """
 from __future__ import annotations
 
-import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from langchain_deepseek import ChatDeepSeek
-
-
-# ── LLM factory ──────────────────────────────────────────────────────────────
-
-def _llm(temperature: float = 0.3) -> ChatDeepSeek:
-    return ChatDeepSeek(
-        model="deepseek-chat",
-        api_key=os.getenv("DEEPSEEK_API_KEY", ""),
-        temperature=temperature,
-    )
+from src.desks.equity_ls.infrastructure.llm import get_llm as _llm
 
 
 # ── Result container ──────────────────────────────────────────────────────────
@@ -133,15 +123,17 @@ def _get_news_context(ticker: str, n: int = 8) -> str:
 
 
 def _get_sec_context(ticker: str) -> str:
-    """Pull recent SEC filings from B2."""
+    """Pull recent SEC filings from B2 (flat list of {form, filed, ...} dicts)."""
     try:
         from src.desks.equity_ls.infrastructure.b2_data_source.data_sources import get_sec_filings
         filings = get_sec_filings(ticker)
-        lines = []
-        for ftype, items in filings.items():
-            dates = [f.get("date", "?") for f in items[:3]]
-            lines.append(f"{ftype}: {', '.join(dates) if dates else 'none'}")
-        return "\n".join(lines) if lines else "No filings found."
+        if not filings:
+            return "No filings found."
+        if "_error" in filings[0]:
+            return f"[SEC filings unavailable: {filings[0]['_error']}]"
+        return "\n".join(
+            f"{f.get('form', '?')}: filed {f.get('filed', '?')}" for f in filings[:6]
+        )
     except Exception as e:
         return f"[SEC filings error: {e}]"
 
@@ -382,6 +374,21 @@ Note: final sizing is set by pm_risk, not you. Focus on the direction and convic
         return f"[Trader error: {e}]"
 
 
+# ── Signal extraction ─────────────────────────────────────────────────────────
+
+def _extract_signal(trader_plan: str) -> str:
+    """
+    Best-effort BUY/SELL/AVOID/HOLD from the trader's proposal.
+    Prefers an explicit "Action: X" line; falls back to the first whole-word
+    match in the text (word boundaries — "BUYBACK" doesn't count). HOLD default.
+    """
+    text = trader_plan.upper()
+    m = re.search(r"ACTION\s*[:\-]\s*\**\s*(BUY|SELL|AVOID|HOLD)\b", text)
+    if not m:
+        m = re.search(r"\b(BUY|SELL|AVOID|HOLD)\b", text)
+    return m.group(1) if m else "HOLD"
+
+
 # ── Main pipeline ─────────────────────────────────────────────────────────────
 
 def run(ticker: str, debate_rounds: int = 2, save_to_kb: bool = True) -> TradingAgentsResult:
@@ -488,12 +495,7 @@ def run(ticker: str, debate_rounds: int = 2, save_to_kb: bool = True) -> Trading
                 ("research_manager",     result.investment_plan),
                 ("trader",               result.trader_plan),
             ]
-            # Extract BUY/SELL/HOLD signal from trader plan (best-effort)
-            signal = "HOLD"
-            for word in ["BUY", "SELL", "AVOID", "HOLD"]:
-                if word in result.trader_plan.upper():
-                    signal = word
-                    break
+            signal = _extract_signal(result.trader_plan)
 
             for agent_name, reasoning in agents_to_save:
                 kb.add_agent_output(ticker, agent_name, signal, reasoning)
