@@ -212,16 +212,19 @@ def get_sec_filings(ticker: str, filing_types: list[str] | None = None) -> list[
             timeout=10,
         )
         hits = search.json().get("hits", {}).get("hits", [])
-        return [
-            {
+        results = []
+        for h in hits[:5]:
+            src = h["_source"]
+            cik = (src.get("ciks") or [""])[0].lstrip("0")
+            adsh = src.get("adsh", "")
+            results.append({
                 "ticker": ticker,
-                "form": h["_source"].get("form_type"),
-                "filed": h["_source"].get("file_date"),
-                "description": h["_source"].get("period_of_report"),
-                "url": f"https://www.sec.gov/Archives/edgar/data/{h['_source'].get('entity_id')}/{h['_source'].get('file_num')}",
-            }
-            for h in hits[:5]
-        ]
+                "form": src.get("form"),
+                "filed": src.get("file_date"),
+                "period_ending": src.get("period_ending"),
+                "url": f"https://www.sec.gov/Archives/edgar/data/{cik}/{adsh.replace('-', '')}/{adsh}-index.htm",
+            })
+        return results
     except Exception as e:
         return [{"ticker": ticker, "_error": str(e)}]
 
