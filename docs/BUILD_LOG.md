@@ -3,7 +3,7 @@
 > Architecture: **`src/desks/MASTER.md`**. This log says *where each piece is + what's next*.
 > **Rule:** after every change, update the matching line here (status + location), and add a line to the Decision Log.
 > Status key: ✅ done · 🟡 partial · 🔴 not built · ⏸ parked · 🔁 needs migration onto new model
-> Last updated: 2026-06-30
+> Last updated: 2026-07-02
 
 > **⚠️ 2026-06-30 — two pivots happened. Read before trusting old paths below:**
 > 1. **大清理:** dead code moved out of `src/`. Any `src/core|features|adapters|services/...`
@@ -20,9 +20,16 @@ Build order: `equity_ls` → `quant` (signal service) → `macro` → `pm_risk` 
 Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `src/desks/MASTER.md`.
 
 - ✅ Desk foundation: `IdeaCard` contract + `Desk` base + registry (`src/desks/base.py`, `contracts.py`, `registry.py`)
-- ✅ **equity_ls B1** — universe filter + tier tag (`TickerMeta`) + SQLite exclusion DB (`src/desks/equity_ls/infrastructure/universe.py`, `exclusion_db.py`)
-- ✅ **equity_ls B2** — 8-section data layer, yfinance + OpenBB cross-check (`src/desks/equity_ls/infrastructure/data_sources.py`)
-- 🔴 equity_ls B3 (portfolio DB) · B4 (knowledge base) · B5 (TradingAgents) · then A1–A5 · then C
+- ✅ **equity_ls B1** — universe filter + tier tag (`TickerMeta`) + SQLite exclusion DB (`infrastructure/b1_universe/`)
+- ✅ **equity_ls B2** — 8-section data layer, yfinance + OpenBB cross-check, all 8 sections live (`infrastructure/b2_data_source/`)
+- ✅ **equity_ls B3** — portfolio DB: holdings/watchlist/journal + sector exposure; Notion seed bridge (`infrastructure/b3_portfolio/`)
+- ✅ **equity_ls B4** — knowledge base: reports + FTS search, thesis versions, agent outputs, PDF inbox ingestion (`infrastructure/b4_knowledge_base/`)
+- ✅ **equity_ls B5** — vendored TradingAgents pipeline: 4 analysts ∥ + bull/bear debate + research manager + trader → saves to B4 (`infrastructure/b5_trading_agents/`)
+- ✅ **equity_ls screener** — 6-step methodology (hard filters → peer group → 7 engines → composite /100 → classification → handoff) + Step-7 cadence config (`core/screener/`)
+- ✅ **equity_ls A2** — single-name deep dive: gate → screener → B5 run → desk conclusion → valuation w/ live peer table → trade expression → canonical verdict (`core/a2_deep_dive/`)
+- 🟡 **equity_ls monitor** — daily loop w/ per-ticker last-run state, cadence-driven refresh, deep-dive escalation, Telegram alerts (`core/monitor/`) — built, not yet on a cron
+- ✅ **2026-07-02 audit** — full code audit of the desk: 9 real bugs fixed (monitor never screened holdings; 12M momentum never computed; earnings-date key mismatch killed catalyst+event triggers; SEC field mapping wrong; B5 read SEC shape wrong; FTS delete corrupted index; nondeterministic "latest" rows; DB connection leaks; multiline verdicts broke alert logic) + shared LLM factory w/ timeout/retries + 40 unit tests (`tests/test_equity_ls_desk.py`)
+- 🔴 equity_ls A1 (theme discovery) · A3 (catalyst response) · A4 (portfolio decision support) · A5 (relative value) · C (risk layer) · monitor cron wiring
 
 ---
 
@@ -116,6 +123,12 @@ Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `sr
 
 ## DECISION LOG (newest first)
 
+- **2026-07-02** — Full audit of `src/desks/equity_ls/`: fixed monitor never screening T0/T1 (added per-ticker last-run state in `monitor_state.db`), screener 12M momentum (1y fetch can't cover 252 trading days → 2y, with 52w-high kept at tail(252)), earnings-date key mismatch (`next_earnings_date` vs B2's `earnings_date` — catalyst scoring + event triggers never fired), EDGAR field mapping (`form_type`/`entity_id` don't exist → `form`/`ciks`+`adsh`), B5 SEC context reading list as dict, FTS5 external-content sync moved to triggers (plain DELETE corrupted index), `ORDER BY created_at` tiebroken by `id` (8 same-second inserts made "latest" random), all SQLite modules close connections via `_db()` contextmanager, A2 verdict split into canonical `verdict` + `verdict_detail` (multiline text broke monitor alert filtering), shared `infrastructure/llm.py` (timeout=90s, retries=2 — debate rounds could hang forever), exclusion `add()` upserts reason, ETF returns lru_cached, screener `raw` strips DataFrame baggage · 40 tests in `tests/test_equity_ls_desk.py`; orphaned `tests/backtesting` (imported moved `src.backtesting`) archived to `legacy/superseded/tests_backtesting/`
+- **2026-07-02** — equity_ls A2 valuation view grounded with live peer-multiples table (25+ ticker peer map + sector fallback) injected into prompt · `core/a2_deep_dive/deep_dive.py`
+- **2026-07-01** — equity_ls screener extracted to `core/screener/` (A2, monitor, and future A1 all consume it); Step-7 review cadence as `cadence.py`; market monitor loop stubbed in `core/monitor/` — monitor decides *when*, screener decides *what score*, A2 decides *what view*
+- **2026-07-01** — equity_ls B5 vendored TradingAgents (TauricResearch, Apache-2.0): prompts lifted into our own `pipeline.py` running on B2 data + DeepSeek; original files kept read-only in `vendored/`; outputs persist to B4 · `infrastructure/b5_trading_agents/`
+- **2026-07-01** — equity_ls B4 knowledge base: reports w/ FTS5 search, versioned thesis history, agent outputs, `pdf_inbox/` drop-folder ingestion (pdfplumber, filename → ticker/type) · `infrastructure/b4_knowledge_base/`
+- **2026-07-01** — equity_ls infrastructure reorganised into numbered subfolders `b1_universe / b2_data_source / b3_portfolio / b4_knowledge_base / b5_trading_agents`; core functions into `a1..a5` + `screener` + `monitor`
 - **2026-06-29** — House View desk: run_house_view (A persona + B debate + C trader → synthesize → Recommendation) + pm_view button (one-call advisory verdict); degrade to HOLD/low when LLM down; not wired to triggers · `src/features/house_view/desk.py`
 - **2026-06-29** — House View synthesize_view: persona direction avg + debate lean + quant tiebreak → Action; conviction from agreement; size from trader lens (risk-capped); disagreement surfaced · `src/features/house_view/synthesize.py`
 - **2026-06-29** — House View lens B (bull/bear debate, JSON, degrade balanced) + lens C (trader sizing rule, honours risk CAP as hard constraint, no size_position import) · `src/features/house_view/lenses.py`
