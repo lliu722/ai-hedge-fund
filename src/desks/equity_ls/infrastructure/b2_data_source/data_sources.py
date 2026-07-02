@@ -7,13 +7,13 @@ don't need to know which library produced it.
 
 Sections:
   1. Market Data        — yfinance primary, OpenBB cross-check
-  2. Portfolio / User   — stubs (live reads come from B3 portfolio_db)
-  3. SEC Filings        — SEC EDGAR via requests (copied from src/tools/sec_filings.py)
+  2. Portfolio / User   — live reads from B3 portfolio_db
+  3. SEC Filings        — SEC EDGAR via requests (returns a flat list of filings)
   4. News / Event Feed  — Tavily (copied from src/tools/news_fetcher.py)
-  5. Earnings Calendar  — yfinance + copied from src/tools/earnings_calendar.py
+  5. Earnings Calendar  — yfinance .calendar
   6. Internal Calcs     — momentum, valuation, quality, liquidity, risk, composite
-  7. Research Library   — stub (live reads come from B4 knowledge_base)
-  8. TradingAgents      — stub (wired in B5)
+  7. Research Library   — live reads from B4 knowledge_base
+  8. TradingAgents      — latest trader output from B4 (written by B5 runs)
 """
 from __future__ import annotations
 
@@ -400,9 +400,11 @@ def get_kb_summary(ticker: str) -> dict:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 8. TRADINGAGENTS
-# Stub — wired in B5
+# B5 pipeline runs save agent outputs to B4; this reads the latest trader view.
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_trading_agent_opinion(ticker: str) -> dict:
-    """Returns TradingAgents output for a ticker. Stub — B5 will replace."""
-    return {}
+    """Latest TradingAgents trader output for a ticker (saved by B5 into B4).
+    Empty dict if the name has never been run through the pipeline."""
+    from src.desks.equity_ls.infrastructure.b4_knowledge_base import knowledge_base
+    return knowledge_base.get_latest_agent_output(ticker, "trader") or {}

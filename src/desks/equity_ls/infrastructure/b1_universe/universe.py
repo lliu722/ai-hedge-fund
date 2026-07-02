@@ -12,8 +12,12 @@ Tier definitions:
   T3 — Peer / Supply Chain (competitors, suppliers, customers, read-throughs)
   T4 — Discovered Names    (new names surfaced by A1 Theme Discovery)
 
-T0/T1 stubs for now — will be live reads from B3 (portfolio_db) when built.
-T2 is hardcoded here. T3/T4 are assigned by the functions that discover them.
+T0/T1 are live reads from B3 (portfolio_db). T2 is hardcoded here.
+T3/T4 are assigned by the functions that discover them.
+
+Note: region is matched by suffix, so US class shares must use the yfinance
+dash form ("BRK-B"). The dot form ("BRK.B") would be read as suffix ".B" and
+rejected as region-ineligible.
 """
 from __future__ import annotations
 
@@ -51,7 +55,7 @@ ELIGIBLE_SUFFIXES: set[str] = {
 INSTRUMENT_TYPES = {"single_stock", "etf", "adr", "gdr", "reit", "holding_company"}
 DEFAULT_INSTRUMENT_TYPES: set[str] = INSTRUMENT_TYPES.copy()
 
-# ── T2 Sector Leaders (hardcoded until B3 DB is built) ───────────────────────
+# ── T2 Sector Leaders (hardcoded) ─────────────────────────────────────────────
 # Large, liquid names that define each major sector or theme.
 # This list is intentionally small — only true sector/theme anchors.
 
@@ -117,6 +121,11 @@ def check(
 def in_universe(ticker: str, instrument_type: str = "single_stock") -> bool:
     """Convenience wrapper — returns True/False only."""
     return check(ticker, instrument_type).in_scope
+
+
+def get_sector_leaders() -> set[str]:
+    """The T2 sector-leader set (returns a copy so callers can't mutate it)."""
+    return set(_T2_SECTOR_LEADERS)
 
 
 # ── Tier assignment ───────────────────────────────────────────────────────────

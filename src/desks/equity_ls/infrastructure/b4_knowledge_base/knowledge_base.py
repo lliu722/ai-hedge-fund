@@ -25,6 +25,7 @@ get_latest_agent_output().
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 _DB_PATH = Path(__file__).parent.parent.parent / "data" / "knowledge_base.db"
@@ -70,9 +71,39 @@ def _connect() -> sqlite3.Connection:
             content='reports',
             content_rowid='id'
         );
+
+        -- Triggers own all FTS sync. External-content FTS5 tables must be
+        -- updated via the special 'delete' command — a plain DELETE on the
+        -- FTS table corrupts the index.
+        CREATE TRIGGER IF NOT EXISTS reports_ai AFTER INSERT ON reports BEGIN
+            INSERT INTO reports_fts(rowid, ticker, title, body)
+            VALUES (new.id, new.ticker, new.title, new.body);
+        END;
+        CREATE TRIGGER IF NOT EXISTS reports_ad AFTER DELETE ON reports BEGIN
+            INSERT INTO reports_fts(reports_fts, rowid, ticker, title, body)
+            VALUES ('delete', old.id, old.ticker, old.title, old.body);
+        END;
+        CREATE TRIGGER IF NOT EXISTS reports_au AFTER UPDATE ON reports BEGIN
+            INSERT INTO reports_fts(reports_fts, rowid, ticker, title, body)
+            VALUES ('delete', old.id, old.ticker, old.title, old.body);
+            INSERT INTO reports_fts(rowid, ticker, title, body)
+            VALUES (new.id, new.ticker, new.title, new.body);
+        END;
     """)
     conn.commit()
     return conn
+
+
+@contextmanager
+def _db():
+    """One connection per call: commit/rollback via the transaction context,
+    and always close the connection afterwards."""
+    conn = _connect()
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 # ── Reports ───────────────────────────────────────────────────────────────────
@@ -87,31 +118,26 @@ def add_report(
     """Insert a research document. Returns the new row id."""
     if report_type not in REPORT_TYPES:
         report_type = "other"
-    with _connect() as conn:
+    with _db() as conn:
         cur = conn.execute(
             "INSERT INTO reports (ticker, report_type, title, body, source) VALUES (?,?,?,?,?)",
             (ticker.upper(), report_type, title, body, source),
         )
-        row_id = cur.lastrowid
-        # Keep FTS index in sync
-        conn.execute(
-            "INSERT INTO reports_fts (rowid, ticker, title, body) VALUES (?,?,?,?)",
-            (row_id, ticker.upper(), title, body),
-        )
+        row_id = cur.lastrowid  # FTS index synced by trigger
     return row_id
 
 
 def get_reports(ticker: str, report_type: str | None = None) -> list[dict]:
     """All reports for a ticker, newest first. Optionally filter by type."""
-    with _connect() as conn:
+    with _db() as conn:
         if report_type:
             rows = conn.execute(
-                "SELECT * FROM reports WHERE ticker=? AND report_type=? ORDER BY created_at DESC",
+                "SELECT * FROM reports WHERE ticker=? AND report_type=? ORDER BY created_at DESC, id DESC",
                 (ticker.upper(), report_type),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM reports WHERE ticker=? ORDER BY created_at DESC",
+                "SELECT * FROM reports WHERE ticker=? ORDER BY created_at DESC, id DESC",
                 (ticker.upper(),),
             ).fetchall()
     return [dict(r) for r in rows]
@@ -119,44 +145,47 @@ def get_reports(ticker: str, report_type: str | None = None) -> list[dict]:
 
 def get_latest_report(ticker: str, report_type: str) -> dict | None:
     """Most recent report of a given type for a ticker."""
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute(
-            "SELECT * FROM reports WHERE ticker=? AND report_type=? ORDER BY created_at DESC LIMIT 1",
+            "SELECT * FROM reports WHERE ticker=? AND report_type=? ORDER BY created_at DESC, id DESC LIMIT 1",
             (ticker.upper(), report_type),
         ).fetchone()
     return dict(row) if row else None
 
 
 def search_reports(query: str, ticker: str | None = None) -> list[dict]:
-    """Full-text search across all reports. Optionally scoped to one ticker."""
-    with _connect() as conn:
-        if ticker:
-            rows = conn.execute(
-                """
-                SELECT r.* FROM reports r
-                JOIN reports_fts f ON r.id = f.rowid
-                WHERE reports_fts MATCH ? AND r.ticker = ?
-                ORDER BY r.created_at DESC
-                """,
-                (query, ticker.upper()),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT r.* FROM reports r
-                JOIN reports_fts f ON r.id = f.rowid
-                WHERE reports_fts MATCH ?
-                ORDER BY r.created_at DESC
-                """,
-                (query,),
-            ).fetchall()
-    return [dict(r) for r in rows]
+    """Full-text search across all reports. Optionally scoped to one ticker.
+    Returns [] for FTS-invalid queries (e.g. stray operators) instead of raising."""
+    try:
+        with _db() as conn:
+            if ticker:
+                rows = conn.execute(
+                    """
+                    SELECT r.* FROM reports r
+                    JOIN reports_fts f ON r.id = f.rowid
+                    WHERE reports_fts MATCH ? AND r.ticker = ?
+                    ORDER BY r.created_at DESC, r.id DESC
+                    """,
+                    (query, ticker.upper()),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT r.* FROM reports r
+                    JOIN reports_fts f ON r.id = f.rowid
+                    WHERE reports_fts MATCH ?
+                    ORDER BY r.created_at DESC, r.id DESC
+                    """,
+                    (query,),
+                ).fetchall()
+        return [dict(r) for r in rows]
+    except sqlite3.OperationalError:
+        return []
 
 
 def delete_report(report_id: int) -> None:
-    with _connect() as conn:
-        conn.execute("DELETE FROM reports WHERE id=?", (report_id,))
-        conn.execute("DELETE FROM reports_fts WHERE rowid=?", (report_id,))
+    with _db() as conn:
+        conn.execute("DELETE FROM reports WHERE id=?", (report_id,))  # FTS synced by trigger
 
 
 # ── Thesis versions ───────────────────────────────────────────────────────────
@@ -164,7 +193,7 @@ def delete_report(report_id: int) -> None:
 def save_thesis(ticker: str, thesis: str) -> int:
     """Append a new thesis version. Returns the version number."""
     ticker = ticker.upper()
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT MAX(version) FROM thesis_versions WHERE ticker=?", (ticker,)
         ).fetchone()
@@ -178,7 +207,7 @@ def save_thesis(ticker: str, thesis: str) -> int:
 
 def get_current_thesis(ticker: str) -> str | None:
     """Latest thesis text for a ticker, or None if none saved."""
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT thesis FROM thesis_versions WHERE ticker=? ORDER BY version DESC LIMIT 1",
             (ticker.upper(),),
@@ -188,7 +217,7 @@ def get_current_thesis(ticker: str) -> str | None:
 
 def get_thesis_history(ticker: str) -> list[dict]:
     """All thesis versions for a ticker, newest first."""
-    with _connect() as conn:
+    with _db() as conn:
         rows = conn.execute(
             "SELECT * FROM thesis_versions WHERE ticker=? ORDER BY version DESC",
             (ticker.upper(),),
@@ -206,7 +235,7 @@ def add_agent_output(
     confidence: float = 0.0,
 ) -> int:
     """B5 writes here after running TradingAgents on a ticker. Returns row id."""
-    with _connect() as conn:
+    with _db() as conn:
         cur = conn.execute(
             "INSERT INTO trading_agent_outputs (ticker, agent_name, signal, reasoning, confidence) VALUES (?,?,?,?,?)",
             (ticker.upper(), agent_name, signal.upper(), reasoning, confidence),
@@ -216,15 +245,15 @@ def add_agent_output(
 
 def get_agent_outputs(ticker: str, agent_name: str | None = None) -> list[dict]:
     """All agent outputs for a ticker, newest first. Filter by agent_name if given."""
-    with _connect() as conn:
+    with _db() as conn:
         if agent_name:
             rows = conn.execute(
-                "SELECT * FROM trading_agent_outputs WHERE ticker=? AND agent_name=? ORDER BY created_at DESC",
+                "SELECT * FROM trading_agent_outputs WHERE ticker=? AND agent_name=? ORDER BY created_at DESC, id DESC",
                 (ticker.upper(), agent_name),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT * FROM trading_agent_outputs WHERE ticker=? ORDER BY created_at DESC",
+                "SELECT * FROM trading_agent_outputs WHERE ticker=? ORDER BY created_at DESC, id DESC",
                 (ticker.upper(),),
             ).fetchall()
     return [dict(r) for r in rows]
@@ -232,15 +261,15 @@ def get_agent_outputs(ticker: str, agent_name: str | None = None) -> list[dict]:
 
 def get_latest_agent_output(ticker: str, agent_name: str | None = None) -> dict | None:
     """Most recent agent output. data_sources.py Section 7 calls this."""
-    with _connect() as conn:
+    with _db() as conn:
         if agent_name:
             row = conn.execute(
-                "SELECT * FROM trading_agent_outputs WHERE ticker=? AND agent_name=? ORDER BY created_at DESC LIMIT 1",
+                "SELECT * FROM trading_agent_outputs WHERE ticker=? AND agent_name=? ORDER BY created_at DESC, id DESC LIMIT 1",
                 (ticker.upper(), agent_name),
             ).fetchone()
         else:
             row = conn.execute(
-                "SELECT * FROM trading_agent_outputs WHERE ticker=? ORDER BY created_at DESC LIMIT 1",
+                "SELECT * FROM trading_agent_outputs WHERE ticker=? ORDER BY created_at DESC, id DESC LIMIT 1",
                 (ticker.upper(),),
             ).fetchone()
     return dict(row) if row else None
@@ -339,7 +368,7 @@ def ingest_all_pdfs(
         title = pdf_path.stem.replace("_", " ")
 
         if skip_existing:
-            with _connect() as conn:
+            with _db() as conn:
                 exists = conn.execute(
                     "SELECT 1 FROM reports WHERE ticker=? AND title=?",
                     (inferred_ticker, title),

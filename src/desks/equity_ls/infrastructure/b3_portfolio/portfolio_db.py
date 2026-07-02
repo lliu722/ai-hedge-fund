@@ -16,9 +16,22 @@ not know or care where they came from. Only `seed_from_notion()` touches Notion.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 _DB_PATH = Path(__file__).parent.parent.parent / "data" / "portfolio.db"
+
+
+@contextmanager
+def _db():
+    """One connection per call: commit/rollback via the transaction context,
+    and always close the connection afterwards."""
+    conn = _connect()
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def _connect() -> sqlite3.Connection:
@@ -64,7 +77,7 @@ def upsert_holding(
     rating: str = "", shares: float = 0.0, avg_cost: float = 0.0,
     thesis: str = "", account: str = "",
 ) -> None:
-    with _connect() as conn:
+    with _db() as conn:
         conn.execute("""
             INSERT INTO holdings (ticker, name, sector, role, rating, shares, avg_cost, thesis, account, updated_at)
             VALUES (?,?,?,?,?,?,?,?,?, datetime('now'))
@@ -76,13 +89,13 @@ def upsert_holding(
 
 
 def get_holding(ticker: str) -> dict | None:
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute("SELECT * FROM holdings WHERE ticker = ?", (ticker.upper(),)).fetchone()
     return dict(row) if row else None
 
 
 def get_holdings(account: str | None = None) -> list[dict]:
-    with _connect() as conn:
+    with _db() as conn:
         if account:
             rows = conn.execute("SELECT * FROM holdings WHERE account = ? AND shares > 0 ORDER BY ticker", (account,)).fetchall()
         else:
@@ -91,12 +104,12 @@ def get_holdings(account: str | None = None) -> list[dict]:
 
 
 def remove_holding(ticker: str) -> None:
-    with _connect() as conn:
+    with _db() as conn:
         conn.execute("DELETE FROM holdings WHERE ticker = ?", (ticker.upper(),))
 
 
 def is_holding(ticker: str) -> bool:
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute("SELECT 1 FROM holdings WHERE ticker = ? AND shares > 0", (ticker.upper(),)).fetchone()
     return row is not None
 
@@ -104,7 +117,7 @@ def is_holding(ticker: str) -> bool:
 # ── Watchlist ─────────────────────────────────────────────────────────────────
 
 def add_to_watchlist(ticker: str, name: str = "", note: str = "") -> None:
-    with _connect() as conn:
+    with _db() as conn:
         conn.execute("""
             INSERT INTO watchlist (ticker, name, note) VALUES (?,?,?)
             ON CONFLICT(ticker) DO UPDATE SET name=excluded.name, note=excluded.note
@@ -112,18 +125,18 @@ def add_to_watchlist(ticker: str, name: str = "", note: str = "") -> None:
 
 
 def get_watchlist() -> list[dict]:
-    with _connect() as conn:
+    with _db() as conn:
         rows = conn.execute("SELECT * FROM watchlist ORDER BY added_at DESC").fetchall()
     return [dict(r) for r in rows]
 
 
 def remove_from_watchlist(ticker: str) -> None:
-    with _connect() as conn:
+    with _db() as conn:
         conn.execute("DELETE FROM watchlist WHERE ticker = ?", (ticker.upper(),))
 
 
 def is_watchlist(ticker: str) -> bool:
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute("SELECT 1 FROM watchlist WHERE ticker = ?", (ticker.upper(),)).fetchone()
     return row is not None
 
@@ -131,7 +144,7 @@ def is_watchlist(ticker: str) -> bool:
 # ── Trade journal ─────────────────────────────────────────────────────────────
 
 def log_trade(ticker: str, action: str, *, shares: float = 0.0, price: float = 0.0, rationale: str = "") -> None:
-    with _connect() as conn:
+    with _db() as conn:
         conn.execute(
             "INSERT INTO trade_journal (ticker, action, shares, price, rationale) VALUES (?,?,?,?,?)",
             (ticker.upper(), action, shares, price, rationale),
@@ -139,11 +152,11 @@ def log_trade(ticker: str, action: str, *, shares: float = 0.0, price: float = 0
 
 
 def get_trades(ticker: str | None = None) -> list[dict]:
-    with _connect() as conn:
+    with _db() as conn:
         if ticker:
-            rows = conn.execute("SELECT * FROM trade_journal WHERE ticker = ? ORDER BY traded_at DESC", (ticker.upper(),)).fetchall()
+            rows = conn.execute("SELECT * FROM trade_journal WHERE ticker = ? ORDER BY traded_at DESC, id DESC", (ticker.upper(),)).fetchall()
         else:
-            rows = conn.execute("SELECT * FROM trade_journal ORDER BY traded_at DESC").fetchall()
+            rows = conn.execute("SELECT * FROM trade_journal ORDER BY traded_at DESC, id DESC").fetchall()
     return [dict(r) for r in rows]
 
 

@@ -11,12 +11,16 @@ names with no reliable data, or any name the desk must never touch.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 _DB_PATH = Path(__file__).parent.parent.parent / "data" / "exclusion.db"
 
 
-def _connect() -> sqlite3.Connection:
+@contextmanager
+def _db():
+    """One connection per call: commit/rollback via the transaction context,
+    and always close the connection afterwards."""
     conn = sqlite3.connect(_DB_PATH)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS exclusion_list (
@@ -25,12 +29,15 @@ def _connect() -> sqlite3.Connection:
             added_at    TEXT DEFAULT (datetime('now'))
         )
     """)
-    conn.commit()
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def is_excluded(ticker: str) -> bool:
-    with _connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT 1 FROM exclusion_list WHERE ticker = ?", (ticker.upper(),)
         ).fetchone()
@@ -38,22 +45,25 @@ def is_excluded(ticker: str) -> bool:
 
 
 def add(ticker: str, reason: str = "") -> None:
-    with _connect() as conn:
+    with _db() as conn:
         conn.execute(
-            "INSERT OR IGNORE INTO exclusion_list (ticker, reason) VALUES (?, ?)",
+            """
+            INSERT INTO exclusion_list (ticker, reason) VALUES (?, ?)
+            ON CONFLICT(ticker) DO UPDATE SET reason = excluded.reason
+            """,
             (ticker.upper(), reason),
         )
 
 
 def remove(ticker: str) -> None:
-    with _connect() as conn:
+    with _db() as conn:
         conn.execute(
             "DELETE FROM exclusion_list WHERE ticker = ?", (ticker.upper(),)
         )
 
 
 def list_all() -> list[dict]:
-    with _connect() as conn:
+    with _db() as conn:
         rows = conn.execute(
             "SELECT ticker, reason, added_at FROM exclusion_list ORDER BY added_at DESC"
         ).fetchall()
