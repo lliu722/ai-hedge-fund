@@ -82,12 +82,48 @@ MARKET_HOURS_UTC = {
 }
 
 
+# Holiday calendars per market (holidays pkg; NYSE handles observed dates like
+# Jul 3 2026). Country calendars approximate the HK/EU/Asia exchange closures.
+_MARKET_HOLIDAYS = {
+    "US":     ("financial", "NYSE"),
+    "HK":     ("country", "HK"),
+    "China":  ("country", "CN"),
+    "Taiwan": ("country", "TW"),
+    "Korea":  ("country", "KR"),
+    "EU":     ("country", "DE"),   # Xetra proxy
+    "UK":     ("country", "GB"),
+}
+_holiday_cache: dict = {}
+
+
+def _is_market_holiday(market: str) -> bool:
+    """True if today (UTC date — matches local trading date at all our alert
+    times) is an exchange holiday for the market. Unknown market → False."""
+    spec = _MARKET_HOLIDAYS.get(market)
+    if not spec:
+        return False
+    try:
+        import holidays as _hol
+        if market not in _holiday_cache:
+            kind, code = spec
+            _holiday_cache[market] = (
+                _hol.financial_holidays(code) if kind == "financial"
+                else _hol.country_holidays(code)
+            )
+        return datetime.now(timezone.utc).date() in _holiday_cache[market]
+    except Exception:
+        return False  # never let the holiday check kill an alert cycle
+
+
 def _open_markets() -> list:
     now = datetime.now(timezone.utc)
     if now.weekday() >= 5:
         return []
     time_utc = now.hour * 60 + now.minute
-    return [m for m, (o, c) in MARKET_HOURS_UTC.items() if o <= time_utc <= c]
+    return [
+        m for m, (o, c) in MARKET_HOURS_UTC.items()
+        if o <= time_utc <= c and not _is_market_holiday(m)
+    ]
 
 
 def _is_market_open() -> bool:
@@ -1093,6 +1129,9 @@ def _fetch_market_news(query: str, label: str) -> str:
 
 def send_market_close_alert(market: str):
     """Theme-grouped portfolio close summary. Config-driven per market."""
+    if _is_market_holiday(market):
+        print(f"[{datetime.now().strftime('%H:%M')}] {market} holiday — close alert skipped.")
+        return
     print(f"[{datetime.now().strftime('%H:%M')}] Market close alert: {market}")
     try:
         from src.tools.prices import get_live_prices
@@ -1342,6 +1381,9 @@ def check_alerts_report() -> str:
 
 def send_market_open_alert(market: str):
     """Config-driven market open brief. Add a new market by adding an entry to _MARKET_CFG."""
+    if _is_market_holiday(market):
+        print(f"[{datetime.now().strftime('%H:%M')}] {market} holiday — open alert skipped.")
+        return
     print(f"[{datetime.now().strftime('%H:%M')}] Market open alert: {market}")
     try:
         from src.tools.prices import get_live_prices, normalize_ticker

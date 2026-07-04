@@ -2079,6 +2079,21 @@ files = [
 ]
 
 [[package]]
+name = "holidays"
+version = "0.99"
+description = "Open World Holidays Framework"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "holidays-0.99-py3-none-any.whl", hash = "sha256:bc47cefa781dbc6415e782767dea013794146cc629845354b393c53cdee90c64"},
+    {file = "holidays-0.99.tar.gz", hash = "sha256:9ef8278cdfb67dbd93309ec9b30c30609ab35fd57cb207ce4593f80dc91196f5"},
+]
+
+[package.dependencies]
+python-dateutil = ">=2.9.0.post0,<3"
+
+[[package]]
 name = "html5lib"
 version = "1.1"
 description = "HTML parser based on the WHATWG HTML specification"
@@ -7262,4 +7277,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.11"
-content-hash = "5f9fa67f6c5988c594d24e296673b8cf3555a52ff077d1e2328b3245d30cd28a"
+content-hash = "eef43fef094e48490be498a5d02a394d2cdafa3c9c3ffc4743c3823ebba9a624"

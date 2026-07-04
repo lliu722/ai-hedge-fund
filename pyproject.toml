@@ -44,6 +44,7 @@ schedule = "^1.2.2"
 PyPortfolioOpt = "^1.5.0"
 openbb = "^4.7.2"
 pdfplumber = "^0.11.10"
+holidays = "^0.99"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
