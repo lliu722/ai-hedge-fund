@@ -44,14 +44,23 @@ def tavily_search(
     max_results: int = 5,
     search_depth: str = "basic",
     timeout: int = 10,
+    topic: str | None = None,
+    days: int | None = None,
 ) -> list[dict]:
-    """Run a Tavily search. Returns list of result dicts (empty on failure)."""
+    """Run a Tavily search. Returns list of result dicts (empty on failure).
+    topic="news" restricts to actual news articles (all carry published_date);
+    days limits article age (only meaningful with topic="news")."""
     api_key = os.getenv("TAVILY_API_KEY", "")
+    payload = {"query": query, "max_results": max_results, "search_depth": search_depth}
+    if topic:
+        payload["topic"] = topic
+    if days:
+        payload["days"] = days
     try:
         r = requests.post(
             _TAVILY_URL,
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"query": query, "max_results": max_results, "search_depth": search_depth},
+            json=payload,
             timeout=timeout,
         )
         if r.status_code == 200:

@@ -1081,50 +1081,41 @@ _MARKET_CFG = {
     },
 }
 
-_JUNK_DOMAINS = (
-    "youtube.com", "ubs.com", "morganstanley.com", "goldmansachs.com",
-    "jpmorgan.com", "blackrock.com", "fidelity.com", "schwab.com",
-    "vanguard.com", "philadelphiafed.org", "federalreserve.gov", "bea.gov",
-    "investing.com", "tradingview.com", "barchart.com", "seekingalpha.com",
-    "tradingeconomics.com", "macrotrends.net", "wisesheets.io",
-)
-_JUNK_TITLES = (
-    "what to look out for", "survey of professional", "market briefing",
-    "equity market commentary", "house view", "pre-market briefing",
-    "alpha signal monitor", "daily market briefing", "weekly outlook",
-    "morning note", "daily note", "stock market news for",
-    "indexes start month", "markets news, june",
-)
-
-
 def _fetch_market_news(query: str, label: str) -> str:
-    """Fetch news for a market, filter junk, return formatted HTML block or empty string."""
-    from datetime import timedelta
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    """
+    Market news block for the open alert: fetch real news articles (Tavily
+    topic=news, last 2 days), then LLM-compress into trader-relevant bullets —
+    raw search snippets are SEO noise and page chrome. Returns the formatted
+    HTML block, or "" when nothing solid: an empty section beats gibberish.
+    """
     try:
-        results = tavily_search(query, max_results=10, search_depth="basic")
-        items = []
-        for r in results:
-            url   = r.get("url", "").lower()
-            title = r.get("title", "").lower()
-            pub   = (r.get("published_date") or "")[:10]
-            if any(d in url for d in _JUNK_DOMAINS):
-                continue
-            if any(t in title for t in _JUNK_TITLES):
-                continue
-            if pub and pub < yesterday:
-                continue
-            snippet = fmt_snippet(r.get("content", ""), 140)
-            if not snippet:
-                continue
-            items.append(f"• {r.get('title','')[:80].strip()}\n  <i>{snippet}</i>")
-            if len(items) == 4:
-                break
-        if items:
-            return f"\n<b>{label}</b>\n" + "\n".join(items) + "\n"
+        results = tavily_search(query, max_results=10, search_depth="basic",
+                                topic="news", days=2)
+        articles = clean_news(results)
+        if not articles:
+            return ""
+
+        news_text = "\n".join(
+            f"- {a.get('title', '')} — {fmt_snippet(a.get('content', ''), 200)}"
+            for a in articles[:8]
+        )
+        bullets = call_deepseek(
+            "From these raw news search results, extract up to 4 distinct facts that "
+            "matter for a trader at today's market open. One line each, format: "
+            "'• [specific fact] — [market implication]', max 22 words per line. "
+            "Ignore SEO pages, index/chart pages, ads, disclaimers, and anything stale. "
+            "No preamble. If nothing genuinely newsworthy, reply exactly: NONE\n\n"
+            f"{news_text}",
+            max_tokens=250, temperature=0.2,
+        )
+        if not bullets or bullets.startswith("❌") or bullets.strip().upper() == "NONE":
+            return ""
+        lines = [ln.strip() for ln in bullets.splitlines() if ln.strip().startswith("•")][:4]
+        if not lines:
+            return ""
+        return f"\n<b>{label}</b>\n" + "\n".join(lines) + "\n"
     except Exception:
-        pass
-    return ""
+        return ""
 
 
 def send_market_close_alert(market: str):
