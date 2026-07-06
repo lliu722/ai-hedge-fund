@@ -1,7 +1,15 @@
 import os
 import schedule
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+_HKT = timezone(timedelta(hours=8))
+
+
+def _now_hkt_str() -> str:
+    """Current time in HKT for user-facing message headers — Railway runs UTC,
+    so naive datetime.now() labelled 'HKT' was 8h off."""
+    return datetime.now(_HKT).strftime("%d %b %Y, %H:%M")
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
@@ -1308,7 +1316,7 @@ Headlines to review:
         from src.tools.notify import send_telegram
         msg = (
             f"🚨 <b>Breaking News Alert</b>\n"
-            f"<i>{datetime.now().strftime('%d %b %Y, %H:%M HKT')}</i>\n\n"
+            f"<i>{_now_hkt_str()} HKT</i>\n\n"
             f"{filtered}"
         )
         send_telegram(msg)
@@ -1431,7 +1439,7 @@ def send_market_open_alert(market: str):
             earnings_today = f_earn.result(timeout=15)
 
         # ── Build message ──────────────────────────────────────────────────────
-        now_str = datetime.now().strftime("%d %b %Y, %H:%M")
+        now_str = _now_hkt_str()
         msg = f"🔔 {cfg['flag']} <b>{market} Open</b> — {cfg['open_time']}\n<i>{now_str} HKT</i>\n\n"
 
         # Section 1 — Macro snapshot
