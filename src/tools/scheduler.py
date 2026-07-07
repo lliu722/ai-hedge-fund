@@ -937,7 +937,7 @@ PORTFOLIO_CATEGORIES = {
     "Defence & Aerospace":   ["GE", "LMT", "03931.HK"],
     "Quantum":               ["IONQ", "RGTI", "INFQ", "LAES"],
     "Robotics & Automation": ["CGNX", "02729.HK", "09973.HK"],
-    "EV & Future Mobility":  ["XPEV", "07489.HK", "601689.SS", "EH", "JOBY", "EVTL"],
+    "EV & Future Mobility":  ["UBER", "XPEV", "07489.HK", "601689.SS", "EH", "JOBY", "EVTL"],
     "Banks & Financials":    ["JPM", "MS", "GS"],
     "Crypto & Digital Assets": ["IREN", "CRCL", "HOOD", "MSTR", "XYZ", "STCK",
                                 "BTC", "ETH", "SOL", "MATIC"],
