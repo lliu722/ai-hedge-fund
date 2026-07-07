@@ -123,6 +123,8 @@ Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `sr
 
 ## DECISION LOG (newest first)
 
+- **2026-07-07** — SPCX position closed per Louis (Notion Shares → 0, row kept for tracking; portfolio.db re-seeded, 42 held = exact broker match). Account snapshot noted for risk context: NAV $1.87M, positions $3.12M (~1.67x leverage), cash −$1.25M margin loan, buying power $621k, remaining liquidity $622k · Notion
+
 - **2026-07-07** — Reconciled US broker statement vs system: 41/42 positions matched exactly; UBER (250 @ 75.50) was missing → added to Notion (sector "EV & Auto"), re-seeded portfolio.db (now 104 rows), added to EV & Future Mobility alert category. SPCX absent from broker (private position) — kept · Notion + `src/tools/scheduler.py`
 
 - **2026-07-06** — Portfolio 分组 review with Louis: PORTFOLIO_CATEGORIES rebuilt from 11 stale groups (GE in Banks, most names in Other) to 18 groups covering all 42 holdings + 61 watchlist names exactly once. Mag 7 split out as its own group per Louis (trades as one macro factor); NVDA/TSLA/mega-caps moved there; GE → Defence & Aerospace. Spec PDF: ~/Desktop/Portfolio_Groups_Proposal.pdf. Open items: CBRS unidentified; Xiaomi in China Tech not EV; IREN in Crypto not AI Energy · `src/tools/scheduler.py`
