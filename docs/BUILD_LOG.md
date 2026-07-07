@@ -123,6 +123,8 @@ Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `sr
 
 ## DECISION LOG (newest first)
 
+- **2026-07-06** — Portfolio 分组 review with Louis: PORTFOLIO_CATEGORIES rebuilt from 11 stale groups (GE in Banks, most names in Other) to 18 groups covering all 42 holdings + 61 watchlist names exactly once. Mag 7 split out as its own group per Louis (trades as one macro factor); NVDA/TSLA/mega-caps moved there; GE → Defence & Aerospace. Spec PDF: ~/Desktop/Portfolio_Groups_Proposal.pdf. Open items: CBRS unidentified; Xiaomi in China Tech not EV; IREN in Crypto not AI Energy · `src/tools/scheduler.py`
+
 - **2026-07-06** — Live bot: open-alert positions section now grouped by sector/theme (reuses `_categorise` + `PORTFOLIO_CATEGORIES`, same as close alert); biggest pre-market mover sorts first within each group; relies on send_telegram 4096-char auto-split for the long US list · `src/tools/scheduler.py`
 
 - **2026-07-06** — Live bot: open-alert news section was SEO noise (chart pages, nav chrome, stale articles). Rebuilt `_fetch_market_news`: Tavily `topic="news"` + `days=2` (real articles only, all dated) → `clean_news` → DeepSeek compresses to ≤4 '• fact — implication' bullets; returns empty block when nothing solid (empty beats gibberish, per Louis). `tavily_search` gained optional topic/days params · `src/tools/scheduler.py`, `src/tools/llm.py`
