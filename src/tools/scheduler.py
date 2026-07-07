@@ -919,18 +919,32 @@ def check_price_alerts():
 
 # ── Portfolio Category Map ────────────────────────────────────────────────────
 
+# 18-group map covering the full portfolio + watchlist (2026-07-06 review,
+# spec: ~/Desktop/Portfolio_Groups_Proposal.pdf). Names inside a group trade
+# together — same catalyst, same session, same risk factor.
 PORTFOLIO_CATEGORIES = {
-    "Memory / Storage":     ["MU", "WDC", "SNDK", "DRAM"],
-    "AI Infrastructure":    ["NVDA", "AMD", "TSM", "ASML", "ALAB", "CRDO", "ARM", "AVGO"],
-    "Networking":           ["GLW", "CSCO", "NOK"],
-    "Energy / Power":       ["GEV", "BE", "SEI", "OKLO", "CEG", "VST", "TLN"],
-    "Banks / Financials":   ["JPM", "MS", "GS", "GE"],
-    "Space":                ["RKLB", "ASTS", "SPCX"],
-    "Software / Data":      ["PLTR", "APP", "MSTR", "GOOGL", "MSFT", "META"],
-    "Defence / Industrials":["LMT"],
-    "Quantum":              ["IONQ"],
-    "Telecom / Optical":    ["LITE"],
-    "Crypto":               ["BTC", "ETH", "SOL"],
+    "Mag 7":                 ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"],
+    "AI Chips & Foundry":    ["AMD", "INTC", "TSM", "NVTS", "AVGO", "TXN", "2454.TW",
+                              "00981.HK", "HNHPF", "ARM", "ALAB"],
+    "Semicap Equipment":     ["ASML", "LRCX", "AMAT"],
+    "Memory & Storage":      ["MU", "WDC", "SNDK", "DRAM"],
+    "Optical & Networking":  ["LITE", "GLW", "CRDO", "CSCO", "NOK", "POET", "SIVEF"],
+    "AI Software & Cloud":   ["IBM", "ORCL", "PLTR", "SNOW", "CRWD", "FIG", "CRWV", "APP"],
+    "China Tech & AI":       ["BABA", "00700.HK", "01810.HK", "02513.HK", "00100.HK"],
+    "AI Energy & Power":     ["SEI", "GEV", "BE", "OKLO", "CEG", "SMR", "TLN", "VST",
+                              "ENPH", "TPZ.TO"],
+    "Space & Satellites":    ["SPCX", "ASTS", "RKLB", "ASTX"],
+    "Defence & Aerospace":   ["GE", "LMT", "03931.HK"],
+    "Quantum":               ["IONQ", "RGTI", "INFQ", "LAES"],
+    "Robotics & Automation": ["CGNX", "02729.HK", "09973.HK"],
+    "EV & Future Mobility":  ["XPEV", "07489.HK", "601689.SS", "EH", "JOBY", "EVTL"],
+    "Banks & Financials":    ["JPM", "MS", "GS"],
+    "Crypto & Digital Assets": ["IREN", "CRCL", "HOOD", "MSTR", "XYZ", "STCK",
+                                "BTC", "ETH", "SOL", "MATIC"],
+    "Energy & Resources":    ["SLB", "HAL", "VLO", "02899.HK", "01989.HK", "MP",
+                              "USAR", "— (SECTOR)"],
+    "E-Commerce & Consumer": ["SHOP", "ETSY", "6618.HK", "06181.HK"],
+    "Macro / Index / Hedges": ["GLD", ".VIX", "800000.HK", "^KS11", "SCHR", "CBRS"],
 }
 
 
