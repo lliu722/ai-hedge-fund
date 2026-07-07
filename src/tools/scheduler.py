@@ -1467,7 +1467,7 @@ def send_market_open_alert(market: str):
         if news_block:
             msg += news_block
 
-        # Section 4 — Positions (market-specific tickers only)
+        # Section 4 — Positions grouped by sector/theme (same categories as the close alert)
         if mkt_tickers:
             pre_available = bool(pre_moves)
             if pre_available:
@@ -1475,8 +1475,8 @@ def send_market_open_alert(market: str):
             else:
                 msg += f"\n<b>📊 Your {market} Positions</b> <i>(last close)</i>\n"
 
-            pos_lines = []
-            for ticker in mkt_tickers:
+            def _pos_line(ticker: str):
+                """Returns (sort_key, line) or None if no price available."""
                 d        = held.get(ticker, {})
                 avg_cost = d.get("avg_cost", 0)
                 if ticker in pre_moves:
@@ -1484,24 +1484,30 @@ def send_market_open_alert(market: str):
                     pct   = pm["pre_pct"]
                     arrow = "▲" if pct > 0 else "▼"
                     emoji = "🟢" if pct > 0 else "🔴"
-                    line  = f"{emoji} <b>{ticker}</b> {arrow}{abs(pct):.1f}% pre-mkt (${pm['pre_price']:.2f})"
+                    line  = f"  {emoji} <b>{ticker}</b> {arrow}{abs(pct):.1f}% pre-mkt (${pm['pre_price']:.2f})"
                     if abs(pct) >= 3.0:
                         sh5  = int(5000  / pm["pre_price"])
                         sh10 = int(10000 / pm["pre_price"])
-                        line += f"\n  💡 {'add' if pct < 0 else 'trim'}: $5k={sh5}sh · $10k={sh10}sh"
-                    pos_lines.append((abs(pct), line))
-                else:
-                    p     = prices.get(ticker, {})
-                    price = p.get("price")
-                    if price and avg_cost:
-                        pnl   = (price - avg_cost) / avg_cost * 100
-                        emoji = "🟢" if pnl > 0 else "🔴"
-                        pos_lines.append((0, f"{emoji} <b>{ticker}</b> ${price:.2f} · cost P&L {pnl:+.1f}%"))
-                    elif price:
-                        pos_lines.append((0, f"⚪ <b>{ticker}</b> ${price:.2f}"))
+                        line += f"\n    💡 {'add' if pct < 0 else 'trim'}: $5k={sh5}sh · $10k={sh10}sh"
+                    return (abs(pct), line)
+                p     = prices.get(ticker, {})
+                price = p.get("price")
+                if price and avg_cost:
+                    pnl   = (price - avg_cost) / avg_cost * 100
+                    emoji = "🟢" if pnl > 0 else "🔴"
+                    return (0, f"  {emoji} <b>{ticker}</b> ${price:.2f} · cost P&L {pnl:+.1f}%")
+                if price:
+                    return (0, f"  ⚪ <b>{ticker}</b> ${price:.2f}")
+                return None
 
-            pos_lines.sort(key=lambda x: x[0], reverse=True)
-            msg += "\n".join(line for _, line in pos_lines[:15]) + "\n"
+            cat_blocks = []
+            for cat, cat_tickers in _categorise(mkt_tickers).items():
+                lines = [pl for pl in (_pos_line(t) for t in cat_tickers) if pl]
+                if not lines:
+                    continue
+                lines.sort(key=lambda x: x[0], reverse=True)  # biggest pre-mkt mover first
+                cat_blocks.append(f"<b>{cat}</b>\n" + "\n".join(ln for _, ln in lines))
+            msg += "\n".join(cat_blocks) + "\n"
 
         send_telegram(msg)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} open alert sent.")
