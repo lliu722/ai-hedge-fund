@@ -940,7 +940,7 @@ PORTFOLIO_CATEGORIES = {
     "AI-Apps":               ["IBM", "PLTR", "SNOW", "CRWD", "FIG", "APP"],
     "China Internet":        ["BABA", "09988.HK", "00700.HK", "01810.HK", "01024.HK"],
     "Space & Satellites":    ["SPCX", "ASTS", "RKLB", "ASTX"],
-    "Defence & Aerospace":   ["GE", "LMT", "03931.HK", "RHM.DE"],
+    "Defence & Aerospace":   ["GE", "LMT", "03931.HK", "RHM.DE", "BA.L"],
     "Quantum":               ["IONQ", "RGTI", "INFQ", "LAES"],
     "Robotics & Automation": ["CGNX", "02729.HK", "09973.HK"],
     "EV & Future Mobility":  ["UBER", "XPEV", "07489.HK", "601689.SS", "EH", "JOBY", "EVTL"],
