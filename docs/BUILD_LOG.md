@@ -123,6 +123,8 @@ Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `sr
 
 ## DECISION LOG (newest first)
 
+- **2026-07-07** — HK book reconciled from broker: 10 positions written to Notion (4 existing rows got shares/cost: Zhipu, Zijin, JD Health, Tencent; 6 new rows: Ping An, Alibaba-HK, AIA, CSOP 2x SK Hynix, Meituan, Kuaishou). Notion DB has no Account property — Region select is the market field (existing rows use 'Greater China'). Alert categories updated (7709→Memory, insurers→Financials, 9988/1024→China Tech, 3690→E-Commerce). System now 110 names, 52 held. HK account: NAV HK$1.06M, ~96% invested, no leverage; Zhipu 30.5% + 2x Hynix ETF 23.1% = half the HK book · Notion + `src/tools/scheduler.py`
+
 - **2026-07-07** — SPCX position closed per Louis (Notion Shares → 0, row kept for tracking; portfolio.db re-seeded, 42 held = exact broker match). Account snapshot noted for risk context: NAV $1.87M, positions $3.12M (~1.67x leverage), cash −$1.25M margin loan, buying power $621k, remaining liquidity $622k · Notion
 
 - **2026-07-07** — Reconciled US broker statement vs system: 41/42 positions matched exactly; UBER (250 @ 75.50) was missing → added to Notion (sector "EV & Auto"), re-seeded portfolio.db (now 104 rows), added to EV & Future Mobility alert category. SPCX absent from broker (private position) — kept · Notion + `src/tools/scheduler.py`
