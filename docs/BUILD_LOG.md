@@ -123,6 +123,8 @@ Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `sr
 
 ## DECISION LOG (newest first)
 
+- **2026-07-06** — Live bot: open-alert positions section now grouped by sector/theme (reuses `_categorise` + `PORTFOLIO_CATEGORIES`, same as close alert); biggest pre-market mover sorts first within each group; relies on send_telegram 4096-char auto-split for the long US list · `src/tools/scheduler.py`
+
 - **2026-07-06** — Live bot: open-alert news section was SEO noise (chart pages, nav chrome, stale articles). Rebuilt `_fetch_market_news`: Tavily `topic="news"` + `days=2` (real articles only, all dated) → `clean_news` → DeepSeek compresses to ≤4 '• fact — implication' bullets; returns empty block when nothing solid (empty beats gibberish, per Louis). `tavily_search` gained optional topic/days params · `src/tools/scheduler.py`, `src/tools/llm.py`
 
 - **2026-07-04** — Live bot: market open/close alerts fired on Jul 3 (NYSE closed, observed Jul 4). Added holiday gating via `holidays` pkg — NYSE financial calendar for US (handles observed shifts), country calendars as proxies for HK/CN/TW/KR/DE/GB; guards both alert functions and `_open_markets()` (so intraday jobs gated on `_is_market_open` also pause); check fails open so a calendar error can never suppress a real trading-day alert · `src/tools/scheduler.py`
