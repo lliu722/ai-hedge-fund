@@ -929,7 +929,7 @@ def check_price_alerts():
 PORTFOLIO_CATEGORIES = {
     "Mag 7":                 ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"],
     "AI-Energy":             ["SEI", "GEV", "BE", "OKLO", "CEG", "SMR", "TLN", "VST",
-                              "ENPH", "TPZ.TO"],
+                              "ENPH", "TPZ.TO", "SU.PA"],
     "AI-Chips":              ["AMD", "INTC", "TSM", "NVTS", "AVGO", "TXN", "2454.TW",
                               "00981.HK", "HNHPF", "ARM", "ALAB",
                               "ASML", "LRCX", "AMAT",
@@ -940,7 +940,7 @@ PORTFOLIO_CATEGORIES = {
     "AI-Apps":               ["IBM", "PLTR", "SNOW", "CRWD", "FIG", "APP"],
     "China Internet":        ["BABA", "09988.HK", "00700.HK", "01810.HK", "01024.HK"],
     "Space & Satellites":    ["SPCX", "ASTS", "RKLB", "ASTX"],
-    "Defence & Aerospace":   ["GE", "LMT", "03931.HK"],
+    "Defence & Aerospace":   ["GE", "LMT", "03931.HK", "RHM.DE"],
     "Quantum":               ["IONQ", "RGTI", "INFQ", "LAES"],
     "Robotics & Automation": ["CGNX", "02729.HK", "09973.HK"],
     "EV & Future Mobility":  ["UBER", "XPEV", "07489.HK", "601689.SS", "EH", "JOBY", "EVTL"],
@@ -950,6 +950,7 @@ PORTFOLIO_CATEGORIES = {
     "Energy & Resources":    ["SLB", "HAL", "VLO", "02899.HK", "01989.HK", "MP",
                               "USAR", "— (SECTOR)"],
     "E-Commerce & Consumer": ["SHOP", "ETSY", "6618.HK", "06181.HK", "03690.HK"],
+    "Europe Blue Chips":     ["NVO", "MC.PA", "NESN.SW"],
     "Macro / Index / Hedges": ["GLD", ".VIX", "800000.HK", "^KS11", "SCHR", "CBRS"],
 }
 
