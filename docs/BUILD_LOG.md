@@ -123,7 +123,7 @@ Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `sr
 
 ## DECISION LOG (newest first)
 
-- **2026-07-07** — 5 European names added to watchlist from Bloomberg Core 6 (ASML already held): Rheinmetall RHM.DE → Defence & Aerospace; Schneider SU.PA → AI-Energy (datacenter electrification consensus); Novo NVO + LVMH MC.PA + Nestle NESN.SW → new "Europe Blue Chips" group. 115 names, 18 groups, zero uncategorised; PDF regenerated · Notion + `src/tools/scheduler.py`
+- **2026-07-07** — 6 European names added to watchlist from Bloomberg Core 6 (+ BAE BA.L → Defence) (ASML already held): Rheinmetall RHM.DE → Defence & Aerospace; Schneider SU.PA → AI-Energy (datacenter electrification consensus); Novo NVO + LVMH MC.PA + Nestle NESN.SW → new "Europe Blue Chips" group. 115 names, 18 groups, zero uncategorised; PDF regenerated · Notion + `src/tools/scheduler.py`
 
 - **2026-07-07** — Categories restructured to Jensen's 5-layer AI stack per Louis: AI-Energy / AI-Chips (logic+foundry+semicap+memory incl. 2x Hynix ETF) / AI-Infrastructure (optics+networking+AI cloud; ORCL & CRWV moved here per market consensus) / AI-Models (Zhipu, MiniMax — split out of China Tech) / AI-Apps (sub-tags: cybersecurity, data platforms). Mag 7 unchanged; China Internet keeps platform names; non-AI groups unchanged. 17 groups, 110 names, zero uncategorised. Sub-layer detail lives as per-name tags in the spec PDF (~/Desktop/Portfolio_Groups_Proposal.pdf, now data-driven from live config) · `src/tools/scheduler.py`
 
