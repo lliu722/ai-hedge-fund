@@ -922,18 +922,23 @@ def check_price_alerts():
 # 18-group map covering the full portfolio + watchlist (2026-07-06 review,
 # spec: ~/Desktop/Portfolio_Groups_Proposal.pdf). Names inside a group trade
 # together — same catalyst, same session, same risk factor.
+# AI names follow Jensen's 5-layer AI stack (Energy → Chips → Infrastructure →
+# Models → Apps); fine detail (memory / semicap / cybersecurity / ...) is a
+# sub-tag in the spec PDF, not a separate group. Mag 7 stays its own block;
+# cross-category names sit where market consensus puts them. Non-AI unchanged.
 PORTFOLIO_CATEGORIES = {
     "Mag 7":                 ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA"],
-    "AI Chips & Foundry":    ["AMD", "INTC", "TSM", "NVTS", "AVGO", "TXN", "2454.TW",
-                              "00981.HK", "HNHPF", "ARM", "ALAB"],
-    "Semicap Equipment":     ["ASML", "LRCX", "AMAT"],
-    "Memory & Storage":      ["MU", "WDC", "SNDK", "DRAM", "07709.HK"],
-    "Optical & Networking":  ["LITE", "GLW", "CRDO", "CSCO", "NOK", "POET", "SIVEF"],
-    "AI Software & Cloud":   ["IBM", "ORCL", "PLTR", "SNOW", "CRWD", "FIG", "CRWV", "APP"],
-    "China Tech & AI":       ["BABA", "09988.HK", "00700.HK", "01810.HK", "02513.HK",
-                              "00100.HK", "01024.HK"],
-    "AI Energy & Power":     ["SEI", "GEV", "BE", "OKLO", "CEG", "SMR", "TLN", "VST",
+    "AI-Energy":             ["SEI", "GEV", "BE", "OKLO", "CEG", "SMR", "TLN", "VST",
                               "ENPH", "TPZ.TO"],
+    "AI-Chips":              ["AMD", "INTC", "TSM", "NVTS", "AVGO", "TXN", "2454.TW",
+                              "00981.HK", "HNHPF", "ARM", "ALAB",
+                              "ASML", "LRCX", "AMAT",
+                              "MU", "WDC", "SNDK", "DRAM", "07709.HK"],
+    "AI-Infrastructure":     ["LITE", "GLW", "CRDO", "CSCO", "NOK", "POET", "SIVEF",
+                              "ORCL", "CRWV"],
+    "AI-Models":             ["02513.HK", "00100.HK"],
+    "AI-Apps":               ["IBM", "PLTR", "SNOW", "CRWD", "FIG", "APP"],
+    "China Internet":        ["BABA", "09988.HK", "00700.HK", "01810.HK", "01024.HK"],
     "Space & Satellites":    ["SPCX", "ASTS", "RKLB", "ASTX"],
     "Defence & Aerospace":   ["GE", "LMT", "03931.HK"],
     "Quantum":               ["IONQ", "RGTI", "INFQ", "LAES"],
