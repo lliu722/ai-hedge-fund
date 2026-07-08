@@ -53,6 +53,15 @@ def _yf_fetch(ticker: str) -> dict:
         except Exception:
             quarterly_cashflow = {}
 
+        # yfinance reports debtToEquity in percentage-point form (e.g. KO=124.9 means
+        # a 1.25x ratio, NOT a 124.9x ratio). Every consumer of this field (screener
+        # thresholds, risk penalty) assumes a true ratio, so normalize once here rather
+        # than rely on every caller to remember. Confirmed 2026-07 audit — this bug was
+        # flagging low-debt names (NVDA, MU) as high-leverage because their raw
+        # percentage-point value exceeded ratio-scale thresholds.
+        raw_de = info.get("debtToEquity")
+        debt_to_equity = raw_de / 100 if raw_de is not None else None
+
         return {
             # ── Price & Quote ──────────────────────────────────────────────
             "price":                info.get("currentPrice") or info.get("regularMarketPrice"),
@@ -100,7 +109,7 @@ def _yf_fetch(ticker: str) -> dict:
             "analyst_count":        info.get("numberOfAnalystOpinions"),
             "recommendation":       info.get("recommendationKey"),
             # ── Debt & Leverage ────────────────────────────────────────────
-            "debt_to_equity":       info.get("debtToEquity"),
+            "debt_to_equity":       debt_to_equity,
             "current_ratio":        info.get("currentRatio"),
             "quick_ratio":          info.get("quickRatio"),
             # ── Ownership & Short Interest ─────────────────────────────────
