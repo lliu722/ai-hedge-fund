@@ -28,7 +28,9 @@ from src.desks.equity_ls.infrastructure.b1_universe import exclusion_db
 # ── Eligible region suffixes ──────────────────────────────────────────────────
 
 ELIGIBLE_SUFFIXES: set[str] = {
-    "",         # US, Canada
+    "",         # US
+    ".TO",      # Canada — Toronto Stock Exchange
+    ".V",       # Canada — TSX Venture
     ".HK",      # Hong Kong
     ".TW",      # Taiwan
     ".KS",      # South Korea KOSPI
@@ -49,6 +51,35 @@ ELIGIBLE_SUFFIXES: set[str] = {
     ".SS",      # China A-share Shanghai
     ".SZ",      # China A-share Shenzhen
 }
+
+# ── Currency by suffix ────────────────────────────────────────────────────────
+# Derived from the ticker, not stored — a stored column can drift out of sync
+# with the ticker; the suffix can't. 2026-07 audit finding: exposure/concentration
+# sums that mix USD and HKD positions would be silently wrong without this.
+
+_SUFFIX_CURRENCY: dict[str, str] = {
+    "":     "USD",
+    ".TO":  "CAD", ".V": "CAD",
+    ".HK":  "HKD",
+    ".TW":  "TWD",
+    ".KS":  "KRW", ".KQ": "KRW",
+    ".T":   "JPY",
+    ".BO":  "INR", ".NS": "INR",
+    ".SI":  "SGD",
+    ".AX":  "AUD",
+    ".L":   "GBP",
+    ".DE":  "EUR", ".PA": "EUR", ".AS": "EUR", ".MI": "EUR", ".MC": "EUR",
+    ".SW":  "CHF",
+    ".ST":  "SEK",
+    ".SS":  "CNY", ".SZ": "CNY",
+}
+
+
+def currency_for(ticker: str) -> str:
+    """Trading currency implied by the ticker's exchange suffix. 'USD' for any
+    unrecognized suffix (fails safe to the most common case rather than None,
+    since callers generally need SOME currency to bucket by)."""
+    return _SUFFIX_CURRENCY.get(_get_suffix(ticker), "USD")
 
 # ── Instrument types ──────────────────────────────────────────────────────────
 

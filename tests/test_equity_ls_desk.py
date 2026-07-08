@@ -16,6 +16,7 @@ from src.desks.equity_ls.infrastructure.b4_knowledge_base import knowledge_base 
 from src.desks.equity_ls.infrastructure.b5_trading_agents.pipeline import _extract_signal
 from src.desks.equity_ls.infrastructure.b2_data_source import data_sources
 from src.desks.equity_ls.infrastructure.b4_knowledge_base import decision_history as dh
+from src.desks.equity_ls.core.risk import checks as risk_checks
 
 
 # ── Fixtures: point every DB at a temp file ───────────────────────────────────
@@ -400,3 +401,112 @@ class TestMonitorState:
     def test_mark_and_check(self, tmp_dbs):
         monitor._mark_run("NVDA")
         assert monitor._days_since_last_run("nvda") == 0
+
+
+# ── C risk layer: concentration / liquidity / data quality ────────────────────
+
+class TestConcentrationCheck:
+    def test_flags_position_over_threshold(self):
+        holdings = [
+            {"ticker": "AAA", "shares": 100},  # 100*30 = 3000 -> 75% of book
+            {"ticker": "BBB", "shares": 100},  # 100*10 = 1000 -> 25% of book
+        ]
+        prices = {"AAA": 30.0, "BBB": 10.0}
+        flags = risk_checks.scan_concentration(
+            holdings, prices, warning_threshold=0.5, critical_threshold=0.7
+        )
+        tickers_flagged = {f.ticker for f in flags}
+        assert "AAA" in tickers_flagged  # 75% > both thresholds
+        assert "BBB" not in tickers_flagged  # 25% < warning_threshold 0.5
+        assert flags[0].severity == "critical"  # 75% >= critical_threshold 0.7
+
+    def test_currency_books_kept_separate(self):
+        """A position that's tiny vs the combined USD+HKD portfolio but huge
+        within its own currency book must still be flagged — mixing USD/HKD
+        books was audit finding #12 (currency mixing silently understates risk).
+        0700.HK here is <1% of combined USD+HKD value but 100% of the HKD book."""
+        holdings = [
+            {"ticker": "NVDA", "shares": 100_000},    # USD book: $19M
+            {"ticker": "AAPL", "shares": 100_000},    # USD book: $21.5M — NVDA diluted to 47%
+            {"ticker": "0700.HK", "shares": 10},      # HKD book: only position, 100% of it
+        ]
+        prices = {"NVDA": 190.0, "AAPL": 215.0, "0700.HK": 634.5}
+        flags = risk_checks.scan_concentration(
+            holdings, prices, warning_threshold=0.6, critical_threshold=0.9
+        )
+        flagged = {f.ticker: f for f in flags}
+        assert "0700.HK" in flagged and flagged["0700.HK"].detail["currency"] == "HKD"
+        assert flagged["0700.HK"].detail["weight"] == 1.0
+        # NVDA/AAPL are ~47%/53% of the USD book — both under the 60% warning bar
+        assert "NVDA" not in flagged and "AAPL" not in flagged
+
+    def test_stale_price_flagged_not_hidden(self):
+        """2026-07 finding: yfinance couldn't price Zhipu/2x-Hynix (your two
+        biggest real concentration risks). Falling back to cost basis silently
+        would understate weight for names that are up big. Must flag instead."""
+        holdings = [{"ticker": "02513.HK", "shares": 200, "avg_cost": 459.80}]
+        flags = risk_checks.scan_concentration(holdings, prices={})  # no live price
+        assert len(flags) == 1
+        assert flags[0].detail["stale_price"] is True
+        assert "no live price" in flags[0].message
+
+    def test_zero_share_positions_ignored(self):
+        holdings = [{"ticker": "SOLD", "shares": 0, "avg_cost": 50}]
+        assert risk_checks.scan_concentration(holdings, prices={"SOLD": 60.0}) == []
+
+
+class TestLiquidityCheck:
+    def test_within_threshold_no_flag(self):
+        # 1M position / (100k shares * $20 = $2M ADV) = 0.5 days
+        assert risk_checks.check_liquidity("X", 1_000_000, 100_000, 20.0) is None
+
+    def test_over_threshold_warning(self):
+        f = risk_checks.check_liquidity("X", 10_000_000, 50_000, 20.0)  # 10 days
+        assert f.severity == "warning"
+
+    def test_way_over_threshold_critical(self):
+        f = risk_checks.check_liquidity("X", 30_000_000, 50_000, 20.0)  # 30 days
+        assert f.severity == "critical"
+
+    def test_missing_volume_data_flagged(self):
+        f = risk_checks.check_liquidity("X", 1000, None, 20.0)
+        assert f is not None and f.severity == "warning"
+
+
+class TestDataQualityCheck:
+    def test_error_in_market_data(self):
+        f = risk_checks.check_data_quality("X", {"_error": "timeout"})
+        assert f.severity == "critical"
+
+    def test_missing_critical_field(self):
+        f = risk_checks.check_data_quality("X", {"market_cap": 1e9})  # no price
+        assert f.severity == "critical" and "price" in f.detail["missing"]
+
+    def test_thin_scoring_fields_warns(self):
+        f = risk_checks.check_data_quality("X", {"price": 10, "market_cap": 1e9})
+        assert f.severity == "warning"
+
+    def test_healthy_data_no_flag(self):
+        healthy = {
+            "price": 10, "market_cap": 1e9, "trailing_pe": 15, "forward_pe": 12,
+            "ev_to_ebitda": 8, "revenue_growth": 0.1, "gross_margins": 0.4,
+            "operating_margins": 0.2, "free_cash_flow": 1e8, "return_on_equity": 0.15,
+        }
+        assert risk_checks.check_data_quality("X", healthy) is None
+
+
+class TestRunMinimalChecks:
+    def test_combines_data_quality_and_liquidity(self):
+        flags = risk_checks.run_minimal_checks(
+            "X", market_data={"market_cap": 1e9}, position_value=1000,
+        )
+        # missing price -> data_quality critical; liquidity skipped (no market_data avg_volume)
+        assert any(f.check == "data_quality" for f in flags)
+
+    def test_no_position_value_skips_liquidity(self):
+        healthy = {
+            "price": 10, "market_cap": 1e9, "trailing_pe": 15, "forward_pe": 12,
+            "ev_to_ebitda": 8, "revenue_growth": 0.1, "gross_margins": 0.4,
+            "operating_margins": 0.2, "free_cash_flow": 1e8, "return_on_equity": 0.15,
+        }
+        assert risk_checks.run_minimal_checks("X", healthy, position_value=None) == []
