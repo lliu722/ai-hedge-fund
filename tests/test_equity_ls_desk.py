@@ -17,6 +17,8 @@ from src.desks.equity_ls.infrastructure.b5_trading_agents.pipeline import _extra
 from src.desks.equity_ls.infrastructure.b2_data_source import data_sources
 from src.desks.equity_ls.infrastructure.b4_knowledge_base import decision_history as dh
 from src.desks.equity_ls.core.risk import checks as risk_checks
+from src.desks.equity_ls.core.a3_catalyst_response import catalyst_response as a3
+from src.desks.equity_ls.core.a5_relative_value import peers as a5_peers
 
 
 # ── Fixtures: point every DB at a temp file ───────────────────────────────────
@@ -510,3 +512,145 @@ class TestRunMinimalChecks:
             "operating_margins": 0.2, "free_cash_flow": 1e8, "return_on_equity": 0.15,
         }
         assert risk_checks.run_minimal_checks("X", healthy, position_value=None) == []
+
+
+# ── A5: shared peer map ────────────────────────────────────────────────────────
+
+class TestA5Peers:
+    def test_explicit_map_wins_over_sector(self):
+        assert a5_peers.get_peers("NVDA") == ["AMD", "INTC", "AVGO", "QCOM", "TSM"]
+
+    def test_sector_fallback_for_unmapped_ticker(self):
+        peers = a5_peers.get_peers("SOMEUNKNOWNCO", sector="Technology")
+        assert peers == a5_peers.SECTOR_FALLBACK["Technology"]
+
+    def test_no_map_no_sector_returns_empty(self):
+        assert a5_peers.get_peers("SOMEUNKNOWNCO", sector="") == []
+
+    def test_limit_respected(self):
+        assert len(a5_peers.get_peers("NVDA", limit=2)) == 2
+
+
+# ── A3: catalyst response ──────────────────────────────────────────────────────
+
+class TestA3DedupeAndBudget:
+    def test_not_processed_initially(self, tmp_dbs):
+        assert a3._recently_processed("NVDA", "earnings_preview", 1) is False
+
+    def test_processed_within_window_detected(self, tmp_dbs):
+        dh.record_decision("NVDA", "a3", "Monitor", "x", triggered_by="earnings_preview")
+        assert a3._recently_processed("NVDA", "earnings_preview", 1) is True
+
+    def test_different_event_type_not_deduped(self, tmp_dbs):
+        dh.record_decision("NVDA", "a3", "Monitor", "x", triggered_by="earnings_preview")
+        assert a3._recently_processed("NVDA", "catalyst", 1) is False
+
+    def test_budget_tracks_only_reruns(self, tmp_dbs):
+        dh.record_decision("NVDA", "a3", "Monitor", "x", triggered_by="earnings_preview")  # not a rerun
+        assert a3._reruns_today() == 0
+        dh.record_decision("MU", "a3", "Deep Dive", "x", triggered_by="rerun:earnings_review")
+        assert a3._reruns_today() == 1
+
+    def test_budget_remaining_decreases(self, tmp_dbs):
+        dh.record_decision("MU", "a3", "Deep Dive", "x", triggered_by="rerun:earnings_review")
+        assert a3.budget_remaining(daily_budget=5) == 4
+        assert a3.budget_remaining(daily_budget=1) == 0
+
+
+class TestA3Wiring:
+    """A3's full run() with every LLM/network call mocked — verifies the
+    control flow: dedupe -> judge -> read-through -> rerun-if-material,
+    budget-capped -> always record_decision (never current_view)."""
+
+    @staticmethod
+    def _patches(judge_return, deep_dive_run=None):
+        from unittest.mock import patch
+
+        class _FakeScreen:
+            sector = "Technology"
+
+        patches = [
+            patch.object(a3, "_get_current_thesis", return_value="Long thesis"),
+            patch.object(a3, "_get_news_context", return_value="no news"),
+            patch.object(a3, "_get_price_reaction", return_value="$100 (0%)"),
+            patch.object(a3, "_get_earnings_context", return_value={}),
+            patch.object(a3, "_judge_event", return_value=judge_return),
+            patch("src.desks.equity_ls.core.screener.screener.run", return_value=_FakeScreen()),
+        ]
+        if deep_dive_run is not None:
+            from src.desks.equity_ls.core.a2_deep_dive import deep_dive
+            patches.append(patch.object(deep_dive, "run", return_value=deep_dive_run))
+        return patches
+
+    def test_unknown_event_type_skipped(self, tmp_dbs):
+        result = a3.run("NVDA", "not_a_real_type")
+        assert result.skipped and "Unknown event_type" in result.skip_reason
+
+    def test_out_of_universe_skipped(self, tmp_dbs):
+        result = a3.run("FOO.XX", "catalyst", force=True)
+        assert result.skipped and "Out of universe" in result.skip_reason
+
+    def test_dedupe_skips_without_force(self, tmp_dbs):
+        dh.record_decision("NVDA", "a3", "Monitor", "x", triggered_by="earnings_preview")
+        result = a3.run("NVDA", "earnings_preview", force=False)
+        assert result.skipped and "Already processed" in result.skip_reason
+
+    def test_force_bypasses_dedupe(self, tmp_dbs):
+        dh.record_decision("NVDA", "a3", "Monitor", "x", triggered_by="earnings_preview")
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for p in self._patches(("confirmed", "Confirms", "Hold")):
+                stack.enter_context(p)
+            result = a3.run("NVDA", "earnings_preview", force=True)
+        assert result.skipped is False
+
+    def test_confirms_does_not_trigger_rerun(self, tmp_dbs):
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for p in self._patches(("solid quarter", "Confirms", "Hold")):
+                stack.enter_context(p)
+            result = a3.run("NVDA", "earnings_review", "beat", force=True)
+        assert result.thesis_impact == "Confirms"
+        assert result.deep_dive_triggered is False
+        assert dh.get_current_view("NVDA") is None  # a3 never sets current_view
+
+    def test_breaks_triggers_rerun_within_budget(self, tmp_dbs):
+        class _FakeDD:
+            verdict = "Sell"
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for p in self._patches(("bad quarter", "Breaks", "Deep Dive"), deep_dive_run=_FakeDD()):
+                stack.enter_context(p)
+            result = a3.run("MU", "earnings_review", "missed badly", force=True)
+        assert result.thesis_impact == "Breaks"
+        assert result.deep_dive_triggered is True
+        assert result.decision_id is not None
+        history = dh.get_decision_history("MU")
+        assert history[0]["triggered_by"] == "rerun:earnings_review"
+
+    def test_breaks_blocked_by_exhausted_budget(self, tmp_dbs):
+        dh.record_decision("PRIOR", "a3", "Deep Dive", "x", triggered_by="rerun:earnings_review")
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for p in self._patches(("bad quarter", "Breaks", "Deep Dive")):
+                stack.enter_context(p)
+            result = a3.run("MU", "earnings_review", "missed", force=True, daily_rerun_budget=1)
+        assert result.deep_dive_triggered is False
+        assert "budget" in result.errors
+
+    def test_read_through_uses_shared_peer_map(self, tmp_dbs):
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for p in self._patches(("ok", "Confirms", "Hold")):
+                stack.enter_context(p)
+            result = a3.run("NVDA", "catalyst", "some news", force=True)
+        assert result.read_through == a5_peers.get_peers("NVDA")
+
+    def test_always_records_decision_never_current_view(self, tmp_dbs):
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for p in self._patches(("ok", "Confirms", "Hold")):
+                stack.enter_context(p)
+            a3.run("NVDA", "catalyst", "some news", force=True)
+        assert len(dh.get_decision_history("NVDA", source="a3")) == 1
+        assert dh.get_current_view("NVDA") is None
