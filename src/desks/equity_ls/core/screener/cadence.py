@@ -3,8 +3,17 @@ Step 7 — Review Frequency cadence config by tier.
 
 Consumed by the Market Monitor to decide how often to run the screener
 on each name and when to escalate to a full A2 deep dive.
+
+Single-authority rule (2026-07 audit fix): `should_trigger_deep_dive` here is
+the ONLY function allowed to decide whether a name escalates to a full A2 run.
+Before this fix, screener.py's `_handoff()` independently decided "T0/T1 always
+escalate" while this module said "T0 only escalates on a major event" — two
+authorities, silently disagreeing, and monitor.py only ever listened to this
+one. `_handoff()` now delegates here instead of re-deciding.
 """
 from __future__ import annotations
+
+from typing import Optional
 
 # Cadence config per tier
 _CADENCE: dict[int, dict] = {
@@ -65,6 +74,16 @@ def should_run_score_refresh(tier: int, days_since_last_run: int) -> bool:
     freq = get_cadence(tier)["score_refresh"]
     interval = {"daily": 1, "weekly": 7, "biweekly": 14}.get(freq)
     return interval is not None and days_since_last_run >= interval
+
+
+def is_major_event(days_to_earnings: Optional[int], window_days: int = 7) -> bool:
+    """
+    True if earnings (or another dated catalyst, once we track more than
+    earnings) fall within `window_days`. The single definition of "major
+    event" for escalation purposes — screener.py and monitor.py both call
+    this rather than each hardcoding the same magic number.
+    """
+    return days_to_earnings is not None and 0 <= days_to_earnings <= window_days
 
 
 def should_trigger_deep_dive(tier: int, score: float, has_major_event: bool = False) -> bool:

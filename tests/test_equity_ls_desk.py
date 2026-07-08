@@ -14,6 +14,7 @@ from src.desks.equity_ls.infrastructure.b1_universe import exclusion_db, univers
 from src.desks.equity_ls.infrastructure.b3_portfolio import portfolio_db
 from src.desks.equity_ls.infrastructure.b4_knowledge_base import knowledge_base as kb
 from src.desks.equity_ls.infrastructure.b5_trading_agents.pipeline import _extract_signal
+from src.desks.equity_ls.infrastructure.b2_data_source import data_sources
 
 
 # ── Fixtures: point every DB at a temp file ───────────────────────────────────
@@ -25,6 +26,43 @@ def tmp_dbs(tmp_path, monkeypatch):
     monkeypatch.setattr(kb, "_DB_PATH", tmp_path / "kb.db")
     monkeypatch.setattr(monitor, "_STATE_DB", tmp_path / "monitor_state.db")
     return tmp_path
+
+
+# ── B2: data source unit normalization ────────────────────────────────────────
+
+class _FakeYFTicker:
+    """Minimal stand-in for yfinance.Ticker — only what _yf_fetch touches."""
+    def __init__(self, info: dict):
+        self.info = info
+        self.quarterly_financials = None
+        self.quarterly_cashflow = None
+
+
+class TestDataSourceUnits:
+    def test_debt_to_equity_normalized_to_true_ratio(self, monkeypatch):
+        """2026-07 audit fix: yfinance reports debtToEquity in percentage-point
+        form (KO=124.9 means a 1.25x ratio, not a 124.9x ratio). Every screener
+        threshold assumes a true ratio, so data_sources.py must normalize once
+        at the source rather than let every caller get it wrong."""
+        import yfinance as yf
+        monkeypatch.setattr(yf, "Ticker", lambda ticker: _FakeYFTicker({"debtToEquity": 124.9}))
+        result = data_sources._yf_fetch("KO")
+        assert result["debt_to_equity"] == pytest.approx(1.249)
+
+    def test_debt_to_equity_none_passthrough(self, monkeypatch):
+        import yfinance as yf
+        monkeypatch.setattr(yf, "Ticker", lambda ticker: _FakeYFTicker({"debtToEquity": None}))
+        result = data_sources._yf_fetch("XYZ")
+        assert result["debt_to_equity"] is None
+
+    def test_low_debt_name_no_longer_reads_as_high_leverage(self, monkeypatch):
+        """The false-positive this bug caused: NVDA's raw debtToEquity=6.555
+        (a true ratio of 0.066x) used to blow past the screener's de>3.0
+        'high leverage' threshold because nobody divided by 100."""
+        import yfinance as yf
+        monkeypatch.setattr(yf, "Ticker", lambda ticker: _FakeYFTicker({"debtToEquity": 6.555}))
+        result = data_sources._yf_fetch("NVDA")
+        assert result["debt_to_equity"] < 0.3  # screener's "low leverage" bucket
 
 
 # ── B1: universe gate + tiers ─────────────────────────────────────────────────
@@ -199,13 +237,32 @@ class TestScreenerLogic:
         sr.risk_penalty = screener.ComponentScore(5, 20)
         assert screener._composite(sr) == 15.0
 
-    def test_handoff_t0_always_deep_dive(self):
-        trigger, _ = screener._handoff(50, None, tier=0)
-        assert trigger == "Deep Dive Trigger"
-
     def test_handoff_low_score_avoid(self):
         trigger, _ = screener._handoff(20, None, tier=4)
         assert trigger == "Avoid Note Trigger"
+
+    def test_handoff_agrees_with_cadence_single_authority(self):
+        """2026-07 audit fix: _handoff() used to independently decide 'T0/T1
+        always deep-dive' while cadence.py said 'T0 only on a major event' —
+        two authorities, silently disagreeing. _handoff() must now delegate,
+        so for every (tier, score, days_to_earnings) combination the two
+        can never disagree."""
+        cases = [
+            (0, 50, None),   # T0, mid score, no event -> cadence: False (event-driven only)
+            (0, 95, None),   # T0, high score, no event -> still False, T0 ignores score
+            (0, 50, 3),      # T0, mid score, event in 3d -> True
+            (1, 50, None),   # T1, mid score -> False (needs score>=80)
+            (1, 85, None),   # T1, high score -> True
+            (2, 85, None),   # T2, high score -> True
+            (2, 50, 5),      # T2, event -> True (score-or-event tier)
+            (4, 90, None),   # T4, high score -> True (promotion threshold 75)
+        ]
+        for tier, score, days in cases:
+            has_event = cadence.is_major_event(days)
+            expected = cadence.should_trigger_deep_dive(tier, score, has_event)
+            trigger, _ = screener._handoff(score, days, tier)
+            actual = trigger == "Deep Dive Trigger"
+            assert actual == expected, f"tier={tier} score={score} days={days}: handoff={actual} cadence={expected}"
 
 
 # ── Cadence ───────────────────────────────────────────────────────────────────

@@ -703,8 +703,23 @@ def _classify(score: float) -> tuple[str, str]:
 # ── Step 6: Research handoff ──────────────────────────────────────────────────
 
 def _handoff(score: float, days_to_earnings: Optional[int], tier: int) -> tuple[str, str]:
-    if score >= 80 or tier <= 1:
-        return "Deep Dive Trigger", "Score ≥80 or T0/T1 holding — run full TradingAgents deep dive"
+    """
+    Routes to a research-job type. "Deep Dive Trigger" is delegated to
+    cadence.should_trigger_deep_dive — the single authority on whether a name
+    escalates — so this can never disagree with what the monitor actually
+    does (2026-07 audit fix; previously this function independently declared
+    "T0/T1 always deep-dive" while cadence said "T0 only on a major event").
+    """
+    from src.desks.equity_ls.core.screener.cadence import is_major_event, should_trigger_deep_dive
+
+    has_major_event = is_major_event(days_to_earnings)
+
+    if should_trigger_deep_dive(tier, score, has_major_event):
+        return (
+            "Deep Dive Trigger",
+            f"Tier {tier} cadence rule fired (score={score:.0f}, major_event={has_major_event}) "
+            "— run full TradingAgents deep dive",
+        )
     elif days_to_earnings is not None and 0 < days_to_earnings <= 14:
         return "Earnings Preview Trigger", f"Earnings in {days_to_earnings} days — run earnings-focused research"
     elif 65 <= score < 80:

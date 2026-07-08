@@ -106,7 +106,6 @@ def run_ticker(
     """
     from src.desks.equity_ls.infrastructure.b1_universe.universe import check as universe_check
     from src.desks.equity_ls.core.screener import screener as s
-    from src.desks.equity_ls.core.screener.cadence import should_trigger_deep_dive
 
     ticker = ticker.upper()
     meta = universe_check(ticker)
@@ -139,14 +138,11 @@ def run_ticker(
         print(f"[Monitor] {ticker} screener error: {e}")
         return result
 
-    # ── Major events (earnings within a week) ─────────────────────────────────
-    days_to_earn = sr.raw.get("days_to_earnings")
-    has_major_event = days_to_earn is not None and 0 <= days_to_earn <= 7
-
     # ── Escalate to A2 deep dive? ─────────────────────────────────────────────
-    escalate = force_deep_dive or should_trigger_deep_dive(
-        tier, sr.composite_score, has_major_event
-    )
+    # sr.handoff_trigger already answered this via cadence.should_trigger_deep_dive
+    # (the single authority — see cadence.py). Read it rather than recompute it,
+    # so the monitor and the screener can never disagree about the same decision.
+    escalate = force_deep_dive or sr.handoff_trigger == "Deep Dive Trigger"
 
     if escalate:
         print(f"[Monitor] {ticker} → escalating to A2 deep dive...")
