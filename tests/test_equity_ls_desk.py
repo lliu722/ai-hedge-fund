@@ -19,6 +19,7 @@ from src.desks.equity_ls.infrastructure.b4_knowledge_base import decision_histor
 from src.desks.equity_ls.core.risk import checks as risk_checks
 from src.desks.equity_ls.core.a3_catalyst_response import catalyst_response as a3
 from src.desks.equity_ls.core.a5_relative_value import peers as a5_peers
+from src.desks.equity_ls.core.a4_portfolio_decision import portfolio_decision as a4
 
 
 # ── Fixtures: point every DB at a temp file ───────────────────────────────────
@@ -654,3 +655,90 @@ class TestA3Wiring:
             a3.run("NVDA", "catalyst", "some news", force=True)
         assert len(dh.get_decision_history("NVDA", source="a3")) == 1
         assert dh.get_current_view("NVDA") is None
+
+
+# ── A4: portfolio decision support ──────────────────────────────────────────────
+
+class TestA4PositionReview:
+    """A4 owns current_view for held tickers (the other side of the
+    single-writer rule from TestA2DecisionHistoryWiring). Hard boundary:
+    PositionReview has no size/weight field — direction only."""
+
+    def test_refuses_non_held_ticker(self, tmp_dbs):
+        result = a4.review_position("NOTHELD")
+        assert result.skipped is True and "not currently held" in result.skip_reason
+        assert result.is_held is False
+
+    def test_refuses_zero_share_holding(self, tmp_dbs):
+        portfolio_db.upsert_holding("SOLD", shares=0, avg_cost=50)
+        result = a4.review_position("SOLD")
+        assert result.skipped is True
+
+    def test_reviews_held_position_and_sets_current_view(self, tmp_dbs):
+        from unittest.mock import patch
+        portfolio_db.upsert_holding("NVDA", shares=100, avg_cost=150.0, sector="Technology")
+
+        class _FakeScreen:
+            composite_score = 65.0
+            classification = "Neutral"
+
+        with patch(
+            "src.desks.equity_ls.infrastructure.b2_data_source.data_sources.get_market_data",
+            return_value={"price": 190.0},
+        ), patch(
+            "src.desks.equity_ls.core.screener.screener.run", return_value=_FakeScreen()
+        ), patch.object(a4, "_judge_position", return_value=("Thesis intact", "Hold")):
+            result = a4.review_position("NVDA", save_to_kb=False)
+
+        assert result.is_held is True
+        assert result.holding_snapshot["pnl_pct"] == pytest.approx(26.667, abs=0.01)
+        assert result.direction == "Hold"
+        assert result.became_current_view is True
+        assert dh.get_current_view("NVDA")["source"] == "a4"
+
+    def test_direction_must_be_one_of_defined_set(self, tmp_dbs):
+        assert a4.DIRECTIONS == {"Hold", "Add", "Trim", "Sell", "Rotate", "Deep Dive Further"}
+
+    def test_position_review_has_no_sizing_field(self):
+        """Structural enforcement of the hard boundary (audit finding #4):
+        there must be no field on PositionReview a caller could mistake for
+        a size, weight, or share-count recommendation."""
+        import dataclasses
+        field_names = {f.name for f in dataclasses.fields(a4.PositionReview)}
+        forbidden = {"shares_to_trade", "size", "weight", "target_weight", "dollar_amount", "position_size"}
+        assert not (field_names & forbidden)
+
+
+class TestA4PortfolioReview:
+    def test_empty_portfolio(self, tmp_dbs):
+        result = a4.review_portfolio()
+        assert result.total_positions == 0
+
+    def test_reviews_multi_currency_portfolio(self, tmp_dbs):
+        from unittest.mock import patch
+        portfolio_db.upsert_holding("NVDA", shares=100, avg_cost=150, sector="Technology")
+        portfolio_db.upsert_holding("JPM", shares=50, avg_cost=200, sector="Financials")
+        portfolio_db.upsert_holding("0700.HK", shares=200, avg_cost=600, sector="AI-Apps")
+
+        fake_prices = {"NVDA": {"price": 190.0}, "JPM": {"price": 250.0}, "0700.HK": {"price": 634.5}}
+
+        with patch(
+            "src.desks.equity_ls.infrastructure.b2_data_source.data_sources.get_market_data",
+            side_effect=lambda t: fake_prices.get(t, {"_error": "no data"}),
+        ), patch.object(a4, "_synthesize_strategy", return_value="fake strategy note"):
+            result = a4.review_portfolio()
+
+        assert result.total_positions == 3
+        assert set(result.currency_exposure) == {"USD", "HKD"}
+        assert result.currency_exposure["USD"] + result.currency_exposure["HKD"] == pytest.approx(1.0)
+        assert result.strategy_note == "fake strategy note"
+
+    def test_portfolio_review_never_touches_current_view(self, tmp_dbs):
+        from unittest.mock import patch
+        portfolio_db.upsert_holding("NVDA", shares=100, avg_cost=150, sector="Technology")
+        with patch(
+            "src.desks.equity_ls.infrastructure.b2_data_source.data_sources.get_market_data",
+            return_value={"price": 190.0},
+        ), patch.object(a4, "_synthesize_strategy", return_value=""):
+            a4.review_portfolio()
+        assert dh.get_current_view("NVDA") is None  # read-only scan, per-name review is separate
