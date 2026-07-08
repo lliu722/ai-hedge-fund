@@ -15,6 +15,7 @@ from src.desks.equity_ls.infrastructure.b3_portfolio import portfolio_db
 from src.desks.equity_ls.infrastructure.b4_knowledge_base import knowledge_base as kb
 from src.desks.equity_ls.infrastructure.b5_trading_agents.pipeline import _extract_signal
 from src.desks.equity_ls.infrastructure.b2_data_source import data_sources
+from src.desks.equity_ls.infrastructure.b4_knowledge_base import decision_history as dh
 
 
 # ── Fixtures: point every DB at a temp file ───────────────────────────────────
@@ -24,6 +25,7 @@ def tmp_dbs(tmp_path, monkeypatch):
     monkeypatch.setattr(exclusion_db, "_DB_PATH", tmp_path / "exclusion.db")
     monkeypatch.setattr(portfolio_db, "_DB_PATH", tmp_path / "portfolio.db")
     monkeypatch.setattr(kb, "_DB_PATH", tmp_path / "kb.db")
+    monkeypatch.setattr(dh, "_DB_PATH", tmp_path / "kb.db")
     monkeypatch.setattr(monitor, "_STATE_DB", tmp_path / "monitor_state.db")
     return tmp_path
 
@@ -189,6 +191,93 @@ class TestKnowledgeBase:
         }
         for fname, expected in cases.items():
             assert kb._parse_pdf_filename(Path(fname)) == expected
+
+
+# ── B4: decision history + single-writer current_view ─────────────────────────
+
+class TestDecisionHistory:
+    """2026-07 audit fix #3: A2/A3/A4 all want to write the desk's official
+    stance on a name. This is the resolution — held tickers are owned by a4,
+    not-held tickers by a2, enforced in code via SingleWriterViolation."""
+
+    def test_owner_flips_on_holding_status(self, tmp_dbs):
+        assert dh.owner_for("NVDA") == "a2"
+        portfolio_db.upsert_holding("NVDA", shares=10, avg_cost=100)
+        assert dh.owner_for("NVDA") == "a4"
+
+    def test_owning_source_can_set_current_view(self, tmp_dbs):
+        did = dh.record_as_current_view("NVDA", "a2", "Long", "strong momentum")
+        assert dh.get_current_view("NVDA")["verdict"] == "Long"
+        assert dh.get_current_view("NVDA")["decision_id"] == did
+
+    def test_non_owning_source_rejected(self, tmp_dbs):
+        with pytest.raises(dh.SingleWriterViolation):
+            dh.record_as_current_view("NVDA", "a4", "Trim", "nope")  # not held -> a2 owns
+
+    def test_a3_and_a5_never_own_current_view(self, tmp_dbs):
+        for source in ("a1", "a3", "a5"):
+            with pytest.raises(dh.SingleWriterViolation):
+                dh.record_as_current_view("NVDA", source, "Trim", "nope")
+
+    def test_record_decision_never_touches_current_view(self, tmp_dbs):
+        dh.record_as_current_view("NVDA", "a2", "Long", "initial view")
+        dh.record_decision("NVDA", "a3", "Trim", "earnings miss", triggered_by="catalyst")
+        assert dh.get_current_view("NVDA")["verdict"] == "Long"
+        assert len(dh.get_decision_history("NVDA")) == 2
+
+    def test_new_owner_supersedes_old_current_view(self, tmp_dbs):
+        old_id = dh.record_as_current_view("NVDA", "a2", "Long", "not held yet")
+        portfolio_db.upsert_holding("NVDA", shares=10, avg_cost=100)
+        new_id = dh.record_as_current_view("NVDA", "a4", "Hold", "now held")
+        history = {h["id"]: h for h in dh.get_decision_history("NVDA")}
+        assert history[old_id]["superseded_by"] == new_id
+        assert dh.get_current_view("NVDA")["decision_id"] == new_id
+
+    def test_invalid_source_rejected(self, tmp_dbs):
+        with pytest.raises(ValueError):
+            dh.record_decision("NVDA", "not_a_real_source", "Long", "x")
+
+
+class TestA2DecisionHistoryWiring:
+    """A2 must set current_view for non-held tickers, and must NOT override
+    A4's stance on held tickers — verified through the real deep_dive.run()
+    call with every LLM/network call mocked out."""
+
+    @staticmethod
+    def _run_mocked(ticker: str, tier: int, verdict: str = "Long"):
+        from unittest.mock import patch
+
+        class _FakeScreen:
+            hard_pass = True
+            hard_fail_reason = ""
+            composite_score = 55.0
+            classification = "Neutral"
+            flags: list = []
+            raw = {"sector": "Technology"}
+
+        with patch.object(deep_dive, "_gate", return_value=(True, tier, "")), \
+             patch.object(deep_dive, "_run_screening", return_value=_FakeScreen()), \
+             patch.object(deep_dive, "_format_screening_for_prompt", return_value="fake"), \
+             patch.object(deep_dive, "_run_desk_conclusion", return_value="fake conclusion"), \
+             patch.object(deep_dive, "_run_valuation_view", return_value="fake valuation"), \
+             patch.object(deep_dive, "_run_trade_expression", return_value="fake expression"), \
+             patch.object(deep_dive, "_run_verdict", return_value=(verdict, f"{verdict}\nfake rationale")):
+            return deep_dive.run(ticker, skip_ta=True, save_to_kb=True)
+
+    def test_a2_sets_current_view_for_non_held(self, tmp_dbs):
+        result = self._run_mocked("TESTX", tier=4, verdict="Long")
+        assert result.became_current_view is True
+        assert dh.get_current_view("TESTX")["verdict"] == "Long"
+
+    def test_a2_does_not_override_held_ticker(self, tmp_dbs):
+        portfolio_db.upsert_holding("TESTX", shares=5, avg_cost=10)
+        dh.record_as_current_view("TESTX", "a4", "Hold", "a4's existing stance")
+        result = self._run_mocked("TESTX", tier=0, verdict="Sell")
+        assert result.became_current_view is False
+        assert dh.get_current_view("TESTX")["verdict"] == "Hold"  # unchanged by A2
+        # But A2's output IS logged — A4 can see it next time it reviews the name
+        history = dh.get_decision_history("TESTX", source="a2")
+        assert len(history) == 1 and history[0]["verdict"] == "Sell"
 
 
 # ── B5: signal extraction ─────────────────────────────────────────────────────

@@ -43,6 +43,11 @@ class DeepDiveResult:
 
     # KB report id
     report_id: int | None = None
+    # Decision History id (B4). Only set if this run became the ticker's
+    # current_view — i.e. the ticker wasn't held. See decision_history.py
+    # for the single-writer rule; A2 never overrides A4 on a held name.
+    decision_id: int | None = None
+    became_current_view: bool = False
     errors: dict = field(default_factory=dict)
 
 
@@ -479,6 +484,30 @@ def run(
             print(f"[A2] Saved to B4 (report_id={result.report_id})")
         except Exception as e:
             result.errors["kb_save"] = str(e)
+
+        # ── Decision History / single-writer current_view ──────────────────────
+        # A2 owns current_view for tickers it doesn't hold; A4 owns held names.
+        # If NVDA is held, this call raises and we fall back to logging A2's
+        # output as an input for A4 to weigh — A2 never overrides the
+        # portfolio-decision desk's stance on a name you actually own.
+        if result.verdict:
+            try:
+                from src.desks.equity_ls.infrastructure.b4_knowledge_base import decision_history as dh
+                try:
+                    result.decision_id = dh.record_as_current_view(
+                        ticker, "a2", result.verdict, result.verdict_detail,
+                        triggered_by="a2_deep_dive",
+                    )
+                    result.became_current_view = True
+                except dh.SingleWriterViolation:
+                    result.decision_id = dh.record_decision(
+                        ticker, "a2", result.verdict, result.verdict_detail,
+                        triggered_by="a2_deep_dive",
+                    )
+                    result.became_current_view = False
+                    print(f"[A2] {ticker} is held — logged as input for A4, did not set current_view")
+            except Exception as e:
+                result.errors["decision_history"] = str(e)
 
     print(f"[A2] Done. Errors: {result.errors or 'none'}")
     print(f"{'='*60}\n")
