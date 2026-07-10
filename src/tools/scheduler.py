@@ -818,6 +818,43 @@ def _check_recovery_alerts(prices: dict, held_data: dict):
         )
 
 
+# ── Holdings Auto-Reload ─────────────────────────────────────────────────────
+# scheduler.py and telegram_bot.py each load their own independent copy of
+# Notion holdings at import time (WATCHLIST_DATA here, WATCHLIST/PORTFOLIO/
+# WATCHLIST_ONLY/WATCHLIST_TICKERS there) — neither auto-syncs with Notion.
+# Previously the only way to pick up a trade, ticker fix, or watchlist add
+# was typing "reload" in Telegram. This refreshes both copies on a timer so
+# edits made directly in Notion (or by anything other than the bot's own
+# buy/sell tools) show up without a manual step.
+
+def auto_reload_holdings():
+    """Refresh both modules' in-memory holdings from Notion. Mutates every
+    dict in place (never rebinds the module-level name) so any other module
+    already holding a reference sees the update immediately — same pattern
+    telegram_bot.py's manual 'reload' command uses."""
+    try:
+        from src.tools.notion_holdings import reload_holdings
+        new_data = reload_holdings()
+
+        WATCHLIST_DATA.clear()
+        WATCHLIST_DATA.update(new_data)
+        WATCHLIST[:] = list(new_data.keys())
+
+        try:
+            import src.tools.telegram_bot as _tb
+            _tb.WATCHLIST.clear(); _tb.WATCHLIST.update(new_data)
+            _tb.WATCHLIST_TICKERS[:] = list(new_data.keys())
+            _tb.WATCHLIST_TICKERS_SET.clear(); _tb.WATCHLIST_TICKERS_SET.update(_tb.WATCHLIST_TICKERS)
+            _tb.PORTFOLIO.clear(); _tb.PORTFOLIO.update({t: d for t, d in new_data.items() if (d.get("shares") or 0) > 0})
+            _tb.WATCHLIST_ONLY.clear(); _tb.WATCHLIST_ONLY.update({t: d for t, d in new_data.items() if (d.get("shares") or 0) == 0})
+        except Exception as e:
+            print(f"[{datetime.now().strftime('%H:%M')}] telegram_bot sync skipped: {e}")
+
+        print(f"[{datetime.now().strftime('%H:%M')}] Holdings auto-reloaded ({len(new_data)} names).")
+    except Exception as e:
+        print(f"[{datetime.now().strftime('%H:%M')}] Holdings auto-reload error: {e}")
+
+
 # ── Price Alerts ──────────────────────────────────────────────────────────────
 
 def check_price_alerts():
@@ -1641,6 +1678,11 @@ def run_scheduler():
 
     # Price alerts — every 30 mins during market hours
     schedule.every(30).minutes.do(check_price_alerts)
+
+    # Holdings auto-reload — every 30 mins, so Notion edits (trades, ticker
+    # fixes, watchlist adds) reach both scheduler.py and telegram_bot.py
+    # without a manual "reload" in Telegram
+    schedule.every(30).minutes.do(auto_reload_holdings)
 
     # Breaking news — every 2 hours, 7am-11pm HKT
     schedule.every(2).hours.do(check_breaking_news)
