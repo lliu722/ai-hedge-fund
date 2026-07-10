@@ -1007,10 +1007,12 @@ def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> N
             context + "\n\n"
             "You are a senior portfolio manager. Output TWO sections separated by ---DETAILS---\n\n"
             "SECTION 1 — SHORT SUMMARY (this goes in the main message):\n"
-            "Format exactly like this (use <b>bold</b> for tickers):\n"
-            "✅ BUY NOW\n• <b>TICKER</b> $price — one-line reason\n\n"
-            "⏳ SET LIMITS\n• <b>TICKER</b> — limit $X, one-line reason\n\n"
-            "❌ SKIP\n• <b>TICKER</b> — one-line reason\n\n"
+            "Every ticker MUST be written as <b>TICKER (Name)</b> using the exact name given in the "
+            "PORTFOLIO section above — never a bare ticker.\n"
+            "Format exactly like this:\n"
+            "✅ BUY NOW\n• <b>TICKER (Name)</b> $price — one-line reason\n\n"
+            "⏳ SET LIMITS\n• <b>TICKER (Name)</b> — limit $X, one-line reason\n\n"
+            "❌ SKIP\n• <b>TICKER (Name)</b> — one-line reason\n\n"
             "💰 Fund it: [which position to trim and why, one line]\n\n"
             "Max 3 tickers per section. Only include sections with actual recommendations.\n\n"
             "---DETAILS---\n\n"
@@ -1037,21 +1039,28 @@ def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> N
         global _shadow_ticker_detail
         _shadow_ticker_detail = {}
         if details_text:
-            # Split on lines that are just "TICKER:" (with optional leading newline)
-            blocks = re.split(r'(?:^|\n)([A-Z]{1,6}):\n', details_text)
+            # Split on lines that are just "TICKER:" (with optional leading newline).
+            # Must accept HK-style tickers (digits + ".HK") and index tickers ("^HSI"),
+            # not just US letters-only — the old [A-Z]{1,6} silently dropped every
+            # non-US ticker's detail block.
+            blocks = re.split(r'(?:^|\n)([A-Za-z0-9.\^]{1,12}):\n', details_text)
             for i in range(1, len(blocks) - 1, 2):
                 ticker = blocks[i].strip()
                 detail = blocks[i + 1].strip()
                 _shadow_ticker_detail[ticker] = detail
 
-        # Extract ALL tickers mentioned in the summary (from <b>TICKER</b> tags)
-        # so every ticker in the message gets a button, even if detail parsing missed it
-        mentioned = re.findall(r'<b>([A-Z]{1,6})</b>', summary_text)
-        # Deduplicate while preserving order
+        # Extract ALL tickers mentioned in the summary (from <b>TICKER (Name)</b> or
+        # bare <b>TICKER</b> tags) so every ticker in the message gets a button, even
+        # if detail parsing missed it. Capture the full bold tag first, then take just
+        # the ticker portion before " (" — matching on [A-Z]{1,6} alone (the old
+        # approach) can't match HK tickers like "9988.HK" (leads with a digit,
+        # contains a dot), which is why HK names never got buttons before.
+        bold_tags = re.findall(r'<b>([^<]+)</b>', summary_text)
         seen = set()
         tickers = []
-        for t in mentioned:
-            if t not in seen:
+        for tag in bold_tags:
+            t = tag.split(" (")[0].strip()
+            if t and t not in seen and len(t) <= 12:
                 seen.add(t)
                 tickers.append(t)
         rows = []
@@ -1233,8 +1242,12 @@ def send_market_close_alert(market: str):
 
         send_telegram(msg)
 
-        # Second message: AI Shadow Portfolio (sends itself with buttons)
-        _shadow_portfolio_message(summary_lines, held, market)
+        # Second message: AI Shadow Portfolio (sends itself with buttons).
+        # Must pass the market-filtered dict, not the full cross-market `held` —
+        # _shadow_portfolio_message has no filter of its own, so passing the
+        # unfiltered book here is what let US names leak into an HK Close message.
+        market_held = {t: held[t] for t in tickers}
+        _shadow_portfolio_message(summary_lines, market_held, market)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} close alert sent.")
 
     except Exception as e:
