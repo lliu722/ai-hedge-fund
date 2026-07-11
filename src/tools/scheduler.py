@@ -123,6 +123,16 @@ def _is_market_holiday(market: str) -> bool:
         return False  # never let the holiday check kill an alert cycle
 
 
+def _is_weekend() -> bool:
+    """True on Saturday/Sunday (UTC). `holidays` calendars only cover public
+    holidays, not ordinary weekends, so this is a separate check. The daily
+    close-alert cron (schedule.every().day.at(...)) fires literally every
+    calendar day with no weekday filter of its own — this is what stops it
+    firing on a Saturday. Bug found live: HK close alert fired on Sat 11 Jul
+    2026 because nothing anywhere in that path checked the day of week."""
+    return datetime.now(timezone.utc).weekday() >= 5
+
+
 def _open_markets() -> list:
     now = datetime.now(timezone.utc)
     if now.weekday() >= 5:
@@ -1195,6 +1205,9 @@ def _fetch_market_news(query: str, label: str) -> str:
 
 def send_market_close_alert(market: str):
     """Theme-grouped portfolio close summary. Config-driven per market."""
+    if _is_weekend():
+        print(f"[{datetime.now().strftime('%H:%M')}] Weekend — close alert skipped.")
+        return
     if _is_market_holiday(market):
         print(f"[{datetime.now().strftime('%H:%M')}] {market} holiday — close alert skipped.")
         return
@@ -1451,6 +1464,9 @@ def check_alerts_report() -> str:
 
 def send_market_open_alert(market: str):
     """Config-driven market open brief. Add a new market by adding an entry to _MARKET_CFG."""
+    if _is_weekend():
+        print(f"[{datetime.now().strftime('%H:%M')}] Weekend — open alert skipped.")
+        return
     if _is_market_holiday(market):
         print(f"[{datetime.now().strftime('%H:%M')}] {market} holiday — open alert skipped.")
         return
