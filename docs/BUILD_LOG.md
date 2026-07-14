@@ -3,7 +3,7 @@
 > Architecture: **`src/desks/MASTER.md`**. This log says *where each piece is + what's next*.
 > **Rule:** after every change, update the matching line here (status + location), and add a line to the Decision Log.
 > Status key: ✅ done · 🟡 partial · 🔴 not built · ⏸ parked · 🔁 needs migration onto new model
-> Last updated: 2026-07-08
+> Last updated: 2026-07-14
 
 > **⚠️ 2026-06-30 — two pivots happened. Read before trusting old paths below:**
 > 1. **大清理:** dead code moved out of `src/`. Any `src/core|features|adapters|services/...`
@@ -132,6 +132,9 @@ Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `sr
 ---
 
 ## DECISION LOG (newest first)
+
+- **2026-07-14** — HK real-account holdings sync: Louis's real HK book (Zijin Mining, SK Hynix 2x ETN, Kuaishou, Tencent, Zhipu resized; JD Health, AIA, Alibaba-W, Ping An closed to 0) was stale in the Notion Holdings DB — updated directly to match. Also fixed the yfinance-under-concurrency gap flagged in the 2026-07-08 entry (never fixed at the time): added retry-with-backoff (empty result treated as retryable, not just exceptions) to `_yf_fetch()` and `_fetch_one_detailed()`, since A4's `review_portfolio()` and A5's peer-table both fan out across ~10 concurrent tickers and the future monitor cron will fan out across the full universe. 118 tests passing · `src/desks/equity_ls/infrastructure/b2_data_source/data_sources.py`, `src/tools/prices.py`
+- **2026-07-14** — Louis adopted a new L1-L7 + Gate C pipeline architecture (from an external brainstorm doc set) to replace the equity_ls A1-A5 layer naming, no argument invited on the decision itself. Key structural change from current build: A2 (deep-dive monolith, forms `current_view` automatically) is retired; the new L4 decision step is manual (Louis synthesizes L2 research doc + L3 Vibe-Trading + Gate C TradingAgents by hand) rather than code-owned. Two human gates confirmed: after L2 (Louis picks which names advance) and after L3/Gate C (Louis makes the final call) — Vibe-Trading positioned as load-bearing, not sandbox-only, contrary to this session's earlier security-caution recommendation. Standards/thresholds per layer (screener score bands, evidence minimums, backtest pass bar, risk-check thresholds) being defined before any build starts — not yet built.
 
 - **2026-07-11** — Live bug, caught by Louis in real time: HK close alert fired on Saturday 11 Jul 2026, full portfolio summary + AI Shadow Portfolio synthesis on a day the market wasn't open. Root cause: `_is_market_holiday()` only checks the `holidays` package (public holidays), has zero concept of ordinary weekends; the close-alert cron (`schedule.every().day.at(...)`) fires every calendar day with no weekday filter. `send_market_open_alert()` had the identical gap in the function itself but was accidentally safe because its cron registration lists Mon-Fri explicitly — pure luck, not a real guard. Added `_is_weekend()`, wired into both functions ahead of the holiday check (defense-in-depth at the function level, not just cron syntax). Verified against the exact failing timestamp · `src/tools/scheduler.py`
 
