@@ -1,6 +1,7 @@
 import yfinance as yf
 import requests
 import threading
+import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
@@ -120,7 +121,14 @@ def _fetch_one_detailed(ticker: str) -> dict:
             return _fetch_crypto_prices([ticker]).get(ticker, {})
         return {}
     try:
-        info = yf.Ticker(yf_ticker).info
+        t = yf.Ticker(yf_ticker)
+        info = {}
+        for attempt in range(3):
+            info = t.info
+            if info:
+                break
+            if attempt < 2:
+                time.sleep(1.0 * (2 ** attempt))
         price = info.get("currentPrice") or info.get("regularMarketPrice")
         if not price:
             return {}

@@ -18,7 +18,30 @@ Sections:
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timedelta
+
+
+def _fetch_with_retry(fn, retries: int = 2, base_delay: float = 1.0):
+    """
+    Retry a yfinance call with exponential backoff. Under rapid concurrent
+    calls yfinance can return empty/None data instead of raising (seen in
+    testing 2026-07-08 with 40+ holdings fetched via ThreadPoolExecutor), so
+    an empty result is treated as a retryable failure, not just an exception.
+    """
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            result = fn()
+            if result:
+                return result
+        except Exception as e:
+            last_exc = e
+        if attempt < retries:
+            time.sleep(base_delay * (2 ** attempt))
+    if last_exc:
+        raise last_exc
+    return {}
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. MARKET DATA
@@ -39,8 +62,8 @@ def get_market_data(ticker: str) -> dict:
 def _yf_fetch(ticker: str) -> dict:
     try:
         import yfinance as yf
-        info = yf.Ticker(ticker).info
         t = yf.Ticker(ticker)
+        info = _fetch_with_retry(lambda: t.info)
 
         # Quarterly financials for margin/FCF trend
         try:
