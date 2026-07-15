@@ -1601,8 +1601,8 @@ def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
 
     elif callback_data.startswith("shadow:"):
         ticker = callback_data.split(":", 1)[1]
-        from src.tools.scheduler import _shadow_ticker_detail
-        detail = _shadow_ticker_detail.get(ticker)
+        from src.tools.scheduler import get_shadow_detail
+        detail = get_shadow_detail(ticker)
         if detail:
             send_message(f"🧠 <b>{ticker} — Full Breakdown</b>\n\n{detail}", chat_id, show_buttons=False)
         else:

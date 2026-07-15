@@ -1018,8 +1018,58 @@ def _categorise(tickers: list) -> dict:
 
 # ── Post-Market Advice ────────────────────────────────────────────────────────
 
-# Per-ticker shadow detail store — populated at close, retrieved on button tap
-_shadow_ticker_detail: dict = {}  # {ticker: detail_text}
+# Per-ticker shadow detail store — populated at close, retrieved on button tap.
+# Persisted to SQLite (survives process restarts/redeploys) and upserted per-ticker
+# rather than replaced wholesale, so one market's close doesn't wipe another's
+# still-fresh buttons (was a bare in-process dict, reset to {} on every call).
+import sqlite3
+
+_SHADOW_DB_DIR = "/app/data" if os.path.exists("/app/data") else "."
+_SHADOW_DB_PATH = os.path.join(_SHADOW_DB_DIR, "shadow_detail.db")
+_SHADOW_DETAIL_TTL_HOURS = 24
+
+
+def _shadow_db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(_SHADOW_DB_PATH, check_same_thread=False)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS shadow_ticker_detail ("
+        "ticker TEXT PRIMARY KEY, detail TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    return conn
+
+
+def _store_shadow_details(details: dict) -> None:
+    """Upsert per-ticker shadow detail — merges, never wipes other tickers' entries."""
+    if not details:
+        return
+    now = datetime.now().isoformat()
+    conn = _shadow_db_conn()
+    with conn:
+        conn.executemany(
+            "INSERT INTO shadow_ticker_detail (ticker, detail, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(ticker) DO UPDATE SET detail=excluded.detail, updated_at=excluded.updated_at",
+            [(t, d, now) for t, d in details.items()],
+        )
+    conn.close()
+
+
+def get_shadow_detail(ticker: str) -> str | None:
+    """Fetch a ticker's shadow-portfolio detail if stored within the TTL window."""
+    conn = _shadow_db_conn()
+    row = conn.execute(
+        "SELECT detail, updated_at FROM shadow_ticker_detail WHERE ticker = ?", (ticker,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    detail, updated_at = row
+    try:
+        age = datetime.now() - datetime.fromisoformat(updated_at)
+    except ValueError:
+        return None
+    if age > timedelta(hours=_SHADOW_DETAIL_TTL_HOURS):
+        return None
+    return detail
 
 
 def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> None:
@@ -1082,9 +1132,8 @@ def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> N
 
         import re
 
-        # Parse per-ticker details and store globally
-        global _shadow_ticker_detail
-        _shadow_ticker_detail = {}
+        # Parse per-ticker details and persist (upsert — see _store_shadow_details)
+        parsed_details: dict = {}
         if details_text:
             # Split on lines that are just "TICKER:" (with optional leading newline).
             # Must accept HK-style tickers (digits + ".HK") and index tickers ("^HSI"),
@@ -1094,7 +1143,8 @@ def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> N
             for i in range(1, len(blocks) - 1, 2):
                 ticker = blocks[i].strip()
                 detail = blocks[i + 1].strip()
-                _shadow_ticker_detail[ticker] = detail
+                parsed_details[ticker] = detail
+        _store_shadow_details(parsed_details)
 
         # Extract ALL tickers mentioned in the summary (from <b>TICKER (Name)</b> or
         # bare <b>TICKER</b> tags) so every ticker in the message gets a button, even
