@@ -1504,9 +1504,15 @@ tools = [
 
 if _MEMORY_BACKEND == "sqlite":
     import os as _os2
+    import sqlite3 as _sqlite3
     _db_path = _os2.path.join(_DB_DIR, "agent_memory.db")
     _volume_mounted = _os2.path.exists("/app/data")
-    memory = _CheckpointSaver.from_conn_string(_db_path)
+    # from_conn_string() is a @contextmanager, not a plain factory — using it
+    # without `with` binds `memory` to a _GeneratorContextManager, not a usable
+    # SqliteSaver. The process runs forever (no with-block to exit), so connect
+    # directly and construct the saver, per SqliteSaver.__init__(conn).
+    _conn = _sqlite3.connect(_db_path, check_same_thread=False)
+    memory = _CheckpointSaver(_conn)
     _persistence = "✅ PERSISTENT (Railway Volume)" if _volume_mounted else "⚠️ EPHEMERAL (mount /app/data volume in Railway to persist)"
     print(f"💾 Memory: SQLite ({_db_path}) — {_persistence}")
 else:
