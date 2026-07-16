@@ -1132,26 +1132,22 @@ def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> N
 
         import re
 
-        # Parse per-ticker details and persist (upsert — see _store_shadow_details)
+        # Parse per-ticker details from Section 2's freeform "TICKER:\n" blocks.
+        # Must accept HK-style tickers (digits + ".HK") and index tickers ("^HSI"),
+        # not just US letters-only.
         parsed_details: dict = {}
         if details_text:
-            # Split on lines that are just "TICKER:" (with optional leading newline).
-            # Must accept HK-style tickers (digits + ".HK") and index tickers ("^HSI"),
-            # not just US letters-only — the old [A-Z]{1,6} silently dropped every
-            # non-US ticker's detail block.
             blocks = re.split(r'(?:^|\n)([A-Za-z0-9.\^]{1,12}):\n', details_text)
             for i in range(1, len(blocks) - 1, 2):
                 ticker = blocks[i].strip()
                 detail = blocks[i + 1].strip()
                 parsed_details[ticker] = detail
-        _store_shadow_details(parsed_details)
 
         # Extract ALL tickers mentioned in the summary (from <b>TICKER (Name)</b> or
-        # bare <b>TICKER</b> tags) so every ticker in the message gets a button, even
-        # if detail parsing missed it. Capture the full bold tag first, then take just
-        # the ticker portion before " (" — matching on [A-Z]{1,6} alone (the old
-        # approach) can't match HK tickers like "9988.HK" (leads with a digit,
-        # contains a dot), which is why HK names never got buttons before.
+        # bare <b>TICKER</b> tags), in order, so every ticker gets a button. Capture
+        # the full bold tag first, then take just the ticker portion before " (" —
+        # matching on [A-Z]{1,6} alone can't match HK tickers like "9988.HK" (leads
+        # with a digit, contains a dot).
         bold_tags = re.findall(r'<b>([^<]+)</b>', summary_text)
         seen = set()
         tickers = []
@@ -1160,6 +1156,24 @@ def _shadow_portfolio_message(summary_lines: list, held: dict, market: str) -> N
             if t and t not in seen and len(t) <= 12:
                 seen.add(t)
                 tickers.append(t)
+
+        # Section 1 and Section 2 are two independently LLM-formatted blocks — if
+        # Section 2's freeform "TICKER:\n" header drifts even slightly on a given
+        # run, that ticker silently gets no parsed detail even though its button
+        # (built from Section 1 above) still appears, leading to a dead "No detail
+        # available" button. Guarantee every button has *some* backing detail by
+        # falling back to that ticker's own summary bullet line.
+        line_by_ticker: dict = {}
+        for line in summary_text.split("\n"):
+            m = re.search(r'<b>([^<]+)</b>', line)
+            if m:
+                line_by_ticker[m.group(1).split(" (")[0].strip()] = line.strip()
+        for t in tickers:
+            if t not in parsed_details and t in line_by_ticker:
+                parsed_details[t] = line_by_ticker[t] + "\n\n(Full breakdown unavailable this cycle — showing summary line only.)"
+
+        _store_shadow_details(parsed_details)
+
         rows = []
         for i in range(0, len(tickers), 3):
             rows.append([
