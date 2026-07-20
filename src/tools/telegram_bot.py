@@ -914,6 +914,13 @@ def manage_watchlist_target(action: str, ticker: str, target_price: float = None
 
 
 @tool
+def add_ticker_to_watchlist(ticker: str, company_name: str = "") -> str:
+    """Add a stock to the Notion watchlist (creates a row with 0 shares). ALWAYS pass the real ticker symbol (e.g. 'ON', 'NVDA', '0700.HK') — if the user says 'it'/'this stock', resolve the actual ticker from the conversation first. Use for 'add X to watchlist', 'watchlist it', 'track this stock'."""
+    from src.tools.notion_holdings import add_to_watchlist
+    return add_to_watchlist(ticker.upper(), company_name.strip().title() if company_name else "")
+
+
+@tool
 def get_market_open_brief(market: str = "US") -> str:
     """On-demand market open brief: pre-market movers, today's earnings, economic calendar. market='US' or 'HK'. Use for 'what's happening before US open', 'HK open brief', 'pre-market movers'."""
     from src.tools.scheduler import send_market_open_alert
@@ -1489,6 +1496,7 @@ tools = [
     list_portfolios,
     get_market_open_brief,
     manage_watchlist_target,
+    add_ticker_to_watchlist,
     get_theme_health,
     get_monthly_review,
     get_theme_radar,
@@ -1711,6 +1719,35 @@ def handle_message(text: str, chat_id: str):
         _target_set_match  = re.match(r'^(?:target|watch\s+price|entry\s+target)\s+([A-Za-z0-9.\-]+)\s+(below|above|at|under|over)?\s*\$?(\d+(?:\.\d+)?)(.*)?$', _cleaned, re.IGNORECASE)
         _target_rm_match   = re.match(r'^(?:remove|delete|cancel)\s+target\s+([A-Za-z0-9.\-]+)$', _cleaned, re.IGNORECASE)
         _target_list_match = _cleaned in ("show targets", "my targets", "list targets", "watchlist targets", "targets")
+
+        # Guard the quick-command regexes against conversational messages. The
+        # matchers were built for terse commands ("add NVDA to watchlist"); a
+        # message like "add it to watchlist and do a deep dive on it" would
+        # capture the pronoun as ticker "IT" (a real ticker — Gartner) and
+        # silently swallow the rest of the request as the company name. Neutralize
+        # the match instead so the message falls through to the LLM agent, which
+        # has conversation memory and resolves "it" from context.
+        _PRONOUN_WORDS = {"it", "this", "that", "them", "these", "those", "one"}
+
+        def _is_pronoun(match, group_idx: int = 1) -> bool:
+            return bool(match) and match.group(group_idx).lower() in _PRONOUN_WORDS
+
+        if _is_pronoun(_add_match) or (
+            _add_match and (_add_match.group(2) or "").lower().startswith(("and ", "then ", "also ", "& "))
+        ):
+            _add_match = None
+        if _is_pronoun(_sell_match):
+            _sell_match = None
+        if _is_pronoun(_buy_match, group_idx=2):
+            _buy_match = None
+        if _is_pronoun(_rate_match):
+            _rate_match = None
+        if _is_pronoun(_thesis_match):
+            _thesis_match = None
+        if _is_pronoun(_alert_set_match):
+            _alert_set_match = None
+        if _is_pronoun(_target_set_match):
+            _target_set_match = None
 
         if _add_match:
             ticker = _add_match.group(1).upper()
