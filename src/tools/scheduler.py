@@ -148,6 +148,42 @@ def _is_market_open() -> bool:
     return len(_open_markets()) > 0
 
 
+_INDEX_MARKET_OVERRIDES = {"^HSI": "HK", "^KS11": "Korea"}
+
+
+def _ticker_market(ticker: str) -> str | None:
+    """
+    Which _open_markets() bucket this ticker trades in. None = always-on
+    (24/7 crypto), never gated by market hours.
+
+    Without this, check_price_alerts() checked EVERY held ticker (US
+    included) as soon as ANY market was open anywhere — a US ticker's move
+    could get reported for the first time during HK trading hours, hours
+    after the US session that actually produced the move had already
+    closed. Confusing live-bug report from Louis: a "US market alert" that
+    fired in the middle of the HK day made no sense because it wasn't
+    actually a live US event at all.
+    """
+    from src.tools.prices import CRYPTO_IDS
+    if ticker in CRYPTO_IDS:
+        return None
+    if ticker in _INDEX_MARKET_OVERRIDES:
+        return _INDEX_MARKET_OVERRIDES[ticker]
+    if ticker.endswith(".HK"):
+        return "HK"
+    if ticker.endswith((".SS", ".SZ")):
+        return "China"
+    if ticker.endswith(".TW"):
+        return "Taiwan"
+    if ticker.endswith((".KS", ".KQ")):
+        return "Korea"
+    if ticker.endswith((".DE", ".PA", ".AS", ".MI", ".SW", ".BR")):
+        return "EU"
+    if ticker.endswith(".L"):
+        return "UK"
+    return "US"
+
+
 # mirrors fmt() in telegram_bot.py — intentional, each uses its own loaded WATCHLIST_DATA
 def fmt(ticker: str) -> str:
     t = ticker.upper()
@@ -824,7 +860,7 @@ def _check_recovery_alerts(prices: dict, held_data: dict):
         from src.tools.notify import send_telegram_with_buttons
         msg = (
             "🔔 <b>Price Stabilisation Alert</b>\n"
-            f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+            f"<i>{_now_hkt_str()} HKT</i>\n\n"
             + "\n\n".join(msgs)
             + "\n\n<i>Tap a ticker for the full deep dive ↓</i>"
         )
@@ -891,7 +927,10 @@ def check_price_alerts():
         today = datetime.now().strftime("%Y-%m-%d")
 
         held_data = {t: d for t, d in WATCHLIST_DATA.items() if (d.get("shares") or 0) > 0}
-        tickers_to_check = list(held_data.keys()) if held_data else WATCHLIST
+        all_tickers = list(held_data.keys()) if held_data else WATCHLIST
+        # Only check tickers whose own home market is actually open (or that
+        # are always-on, like crypto) — see _ticker_market for why this matters.
+        tickers_to_check = [t for t in all_tickers if _ticker_market(t) is None or _ticker_market(t) in open_now]
         prices = get_live_prices(tickers_to_check)
 
         # Check for stabilisation of previously-dropped tickers
@@ -1371,7 +1410,7 @@ def send_market_close_alert(market: str):
 
         msg = (
             f"🔔 {cfg['flag']} <b>{market} Close — Portfolio Summary</b>\n"
-            f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n"
+            f"<i>{_now_hkt_str()} HKT</i>\n"
             f"<i>{total_winners} up · {total_losers} down</i>\n\n"
             + "\n".join(cat_blocks)
             + synthesis
@@ -1527,7 +1566,7 @@ def check_alerts_report() -> str:
         top = moves[:8]
 
         msg = f"🔍 <b>Alert Check — {len(tickers)} held positions</b>\n"
-        msg += f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+        msg += f"<i>{_now_hkt_str()} HKT</i>\n\n"
 
         if alerts:
             msg += "🚨 <b>8%+ Moves:</b>\n"
