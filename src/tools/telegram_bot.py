@@ -191,13 +191,38 @@ def get_updates(offset: int = 0) -> list:
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
+def _resolve_ticker(query: str) -> str:
+    """
+    Resolve a free-text ticker/company-name guess against the loaded watchlist
+    before hitting live data. The LLM's own knowledge of which ticker a
+    company trades under can be stale or wrong (e.g. it assumed Zhipu was
+    still private after it had actually listed as 2513.HK) — if that happens,
+    the live-data tools silently return empty results for the bad symbol and
+    the model falls back to writing from stale training knowledge instead of
+    grounded data. Preferring the user's own actual holdings/watchlist as the
+    source of truth for name -> ticker avoids that failure mode.
+    """
+    q = query.strip()
+    qu = q.upper()
+    if qu in WATCHLIST_TICKERS_SET:
+        return qu
+    ql = q.lower()
+    if len(ql) >= 3:
+        for t, d in WATCHLIST.items():
+            name = (d.get("name") or "").lower()
+            if name and (ql == name or ql in name or name in ql):
+                return t
+    return q
+
+
 @tool
 def deep_dive(ticker: str) -> str:
     """Full AI research report: bull/bear case, catalysts, valuation, verdict. Use for 'deep dive', 'analyse', 'research X'."""
     from src.tools.deep_dive import deep_dive as _deep_dive
-    result = _deep_dive(ticker.upper())
+    resolved = _resolve_ticker(ticker).upper()
+    result = _deep_dive(resolved)
     try:
-        save_research(ticker.upper(), "deep_dive", result)
+        save_research(resolved, "deep_dive", result)
     except Exception as e:
         print(f"[telegram_bot:deep_dive] save_research error: {e}")
     return result

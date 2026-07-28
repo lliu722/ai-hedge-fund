@@ -193,7 +193,13 @@ def _fetch_batch_fast(tickers: list) -> dict:
     for yf_t in yf_tickers:
         orig = norm_map[yf_t]
         try:
-            closes = data["Close"].dropna() if len(yf_tickers) == 1 else data[yf_t]["Close"].dropna()
+            # group_by="ticker" always returns a (Ticker, Price) MultiIndex,
+            # for a single ticker too — data["Close"] raises KeyError since
+            # "Close" is never a top-level key. Confirmed against the currently
+            # pinned yfinance (1.4.1); previously silently caught by the
+            # except below, so every _fetch_batch_fast call returned {} for
+            # every ticker regardless of count.
+            closes = data[yf_t]["Close"].dropna()
             if len(closes) >= 2:
                 today = float(closes.iloc[-1])
                 prev = float(closes.iloc[-2])
