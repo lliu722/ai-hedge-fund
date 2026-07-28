@@ -796,9 +796,9 @@ def _check_recovery_alerts(prices: dict, held_data: dict):
     """
     if not _drop_watch:
         return
-    from src.tools.notify import send_telegram
     to_remove = []
     msgs = []
+    stabilised_tickers = []
     for ticker, watch in _drop_watch.items():
         if watch.get("recovery_alerted"):
             to_remove.append(ticker)
@@ -818,14 +818,21 @@ def _check_recovery_alerts(prices: dict, held_data: dict):
                 f"   {verdict}"
             )
             _drop_watch[ticker]["recovery_alerted"] = True
+            stabilised_tickers.append(ticker)
 
     if msgs:
-        send_telegram(
+        from src.tools.notify import send_telegram_with_buttons
+        msg = (
             "🔔 <b>Price Stabilisation Alert</b>\n"
             f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
             + "\n\n".join(msgs)
-            + "\n\n<i>Reply 'portfolio advisor [ticker]' for add/size/trim analysis.</i>"
+            + "\n\n<i>Tap a ticker for the full deep dive ↓</i>"
         )
+        rows = [
+            [{"text": t, "callback_data": f"deepdive:{t}"} for t in stabilised_tickers[i:i + 3]]
+            for i in range(0, len(stabilised_tickers), 3)
+        ]
+        send_telegram_with_buttons(msg, rows)
 
 
 # ── Holdings Auto-Reload ─────────────────────────────────────────────────────
@@ -879,7 +886,6 @@ def check_price_alerts():
 
     try:
         from src.tools.prices import get_live_prices
-        from src.tools.notify import send_telegram
         from concurrent.futures import ThreadPoolExecutor
 
         today = datetime.now().strftime("%Y-%m-%d")
@@ -914,13 +920,22 @@ def check_price_alerts():
         # ── Custom threshold alerts ───────────────────────────────────────────
         try:
             from src.tools.alert_config import check_custom_alerts, check_watchlist_targets
+            from src.tools.notify import send_telegram_with_buttons
+
+            def _ticker_rows(ts: list) -> list:
+                return [
+                    [{"text": t, "callback_data": f"deepdive:{t}"} for t in ts[i:i + 3]]
+                    for i in range(0, len(ts), 3)
+                ]
+
             custom_hits = check_custom_alerts(prices, _custom_alerted, today)
             if custom_hits:
                 custom_lines = []
                 for t, change, price, threshold, direction in custom_hits:
                     arrow = "📈" if change > 0 else "📉"
                     custom_lines.append(f"{arrow} <b>{fmt(t)}</b>: {change:+.2f}% (${price}) — your {threshold:.1f}% {direction} alert")
-                send_telegram("🔔 <b>Custom Alert Triggered</b>\n\n" + "\n".join(custom_lines))
+                msg = "🔔 <b>Custom Alert Triggered</b>\n\n" + "\n".join(custom_lines) + "\n\n<i>Tap a ticker for the full deep dive ↓</i>"
+                send_telegram_with_buttons(msg, _ticker_rows([t for t, *_ in custom_hits]))
             # Watchlist price targets
             wl_hits = check_watchlist_targets(prices, _custom_alerted, today)
             if wl_hits:
@@ -929,7 +944,8 @@ def check_price_alerts():
                     arrow = "📉" if direction == "below" else "📈"
                     note_str = f"\n  <i>{note}</i>" if note else ""
                     wl_lines.append(f"{arrow} <b>{fmt(t)}</b> hit ${price:.2f} (target: {direction} ${target:.2f}){note_str}")
-                send_telegram("🎯 <b>Watchlist Target Hit</b>\n\n" + "\n".join(wl_lines) + "\n\n<i>Time to size in?</i>")
+                msg = "🎯 <b>Watchlist Target Hit</b>\n\n" + "\n".join(wl_lines) + "\n\n<i>Time to size in? Tap a ticker for the full deep dive ↓</i>"
+                send_telegram_with_buttons(msg, _ticker_rows([t for t, *_ in wl_hits]))
         except Exception as ce:
             print(f"Custom alert check error: {ce}")
 
@@ -954,8 +970,15 @@ def check_price_alerts():
 
             msg = "🚨 <b>Price Alert — 8%+ Move</b>\n\n"
             msg += "\n\n".join(lines)
-            msg += "\n\n<i>Reply 'deep dive [ticker]' for full analysis.</i>"
-            send_telegram(msg)
+            msg += "\n\n<i>Tap a ticker for the full deep dive ↓</i>"
+
+            from src.tools.notify import send_telegram_with_buttons
+            alert_tickers = [t for t, _, _, _ in alert_items]
+            rows = [
+                [{"text": t, "callback_data": f"deepdive:{t}"} for t in alert_tickers[i:i + 3]]
+                for i in range(0, len(alert_tickers), 3)
+            ]
+            send_telegram_with_buttons(msg, rows)
             print(f"[{datetime.now().strftime('%H:%M')}] Sent {len(alert_items)} price alerts.")
         else:
             print(f"[{datetime.now().strftime('%H:%M')}] No new alerts triggered.")
