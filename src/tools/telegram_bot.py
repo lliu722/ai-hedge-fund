@@ -431,9 +431,10 @@ def get_catalyst_calendar(days_ahead: int = 60) -> str:
     return _gc(list(PORTFOLIO.keys()), days_ahead)
 
 
-@tool
-def earnings_reaction(ticker: str) -> str:
-    """Post-earnings move analysis: actual vs expected, guidance vs consensus, whether the move is justified. Use for 'why did X drop/rally after earnings'."""
+def _earnings_reaction_core(ticker: str) -> str:
+    """Shared analysis logic behind earnings_reaction() and
+    get_recent_earnings_recap() — extracted so the recap tool doesn't have to
+    invoke the @tool-wrapped version or duplicate the prompt."""
     from src.tools.prices import get_live_prices
     from src.tools.news_fetcher import get_news_for_tickers
     from concurrent.futures import ThreadPoolExecutor
@@ -455,6 +456,21 @@ def earnings_reaction(ticker: str) -> str:
         print(f"[telegram_bot:earnings_reaction] news fetch error: {e}")
         news_items = []
 
+    # No real coverage found -- refuse to fabricate a "what happened" story.
+    # Previously fell back to "use training knowledge", which produced
+    # confident-sounding but ungrounded claims ("likely reported a beat",
+    # "guidance likely came in below consensus") with zero actual articles
+    # behind them. Same standard as the morning briefing's beta-adjusted move
+    # check: no manufactured narrative from missing data.
+    if not news_items:
+        return (
+            f"📊 <b>Earnings Reaction: {ticker}</b>\n\n"
+            f"No earnings coverage found for {ticker} — can't produce a grounded beat/miss/guidance "
+            f"analysis without real reporting. Current price ${price_data.get('price', 'N/A')} "
+            f"({price_data.get('change_pct', 'N/A')}% today), but that alone doesn't tell you WHY "
+            f"it moved. Check IR/press release directly, or this may not be an earnings-driven move at all."
+        )
+
     price_context = (
         f"Current price: ${price_data.get('price', 'N/A')}\n"
         f"Today's move: {price_data.get('change_pct', 'N/A')}%\n"
@@ -471,7 +487,7 @@ def earnings_reaction(ticker: str) -> str:
     prompt = (
         f"You are a senior equity analyst explaining {ticker}'s post-earnings move to a portfolio manager.\n\n"
         f"MARKET DATA:\n{price_context}\n\n"
-        f"RECENT NEWS & EARNINGS COVERAGE:\n{news_context or 'No news found — use training knowledge.'}\n\n"
+        f"RECENT NEWS & EARNINGS COVERAGE:\n{news_context}\n\n"
         f"Give a structured earnings reaction analysis:\n\n"
         f"<b>1. WHAT HAPPENED</b>\n"
         f"Actual results vs expectations — revenue beat/miss, earnings beat/miss, by how much. "
@@ -495,6 +511,83 @@ def earnings_reaction(ticker: str) -> str:
         return f"📊 <b>Earnings Reaction: {ticker}</b>\n\n{analysis}"
     except Exception as e:
         return f"❌ Error: {str(e)[:150]}"
+
+
+@tool
+def earnings_reaction(ticker: str) -> str:
+    """Post-earnings move analysis: actual vs expected, guidance vs consensus, whether the move is justified. Use for 'why did X drop/rally after earnings'."""
+    return _earnings_reaction_core(ticker)
+
+
+@tool
+def get_recent_earnings_recap() -> str:
+    """
+    Recap of ALL held/watchlist positions that actually reported earnings in
+    roughly the last 7 days -- what happened, beat/miss vs expectations, how
+    the market reacted, whether the move looks justified. Different from
+    get_earnings_calendar (which only shows upcoming dates, not what already
+    happened). Use for 'earnings recap', 'what reported recently', 'recent
+    earnings results', 'how did earnings season go so far'.
+    """
+    from src.tools.llm import tavily_search, clean_news, fmt_snippet
+    from concurrent.futures import ThreadPoolExecutor
+
+    all_names = [(t, d.get("name", t)) for t, d in WATCHLIST.items()]
+    if not all_names:
+        return "📊 No holdings/watchlist loaded."
+
+    # yfinance's earnings-date field only ever holds the NEXT upcoming date —
+    # the moment a company reports, it flips forward, so there's no reliable
+    # "reported N days ago" signal in that data. Search real news instead,
+    # batched (one query per ~10 names) rather than one per ticker.
+    batch_size = 10
+    batches = [all_names[i:i + batch_size] for i in range(0, len(all_names), batch_size)]
+
+    def _search_batch(batch):
+        names_str = " ".join(name for _, name in batch)
+        try:
+            return clean_news(tavily_search(
+                f"quarterly earnings results reported {names_str}",
+                max_results=8, search_depth="basic", topic="news", days=7,
+            ))
+        except Exception:
+            return []
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        batch_results = list(ex.map(_search_batch, batches))
+    articles = [a for batch in batch_results for a in batch]
+
+    if not articles:
+        return "📊 No earnings reports found for your holdings/watchlist in the last ~7 days."
+
+    news_text = "\n".join(
+        f"- {a.get('title', '')} {fmt_snippet(a.get('content', ''), 200)}" for a in articles[:25]
+    )
+    ticker_list = ", ".join(t for t, _ in all_names)
+    extract_prompt = (
+        f"From these news search results, identify which of the following tickers ACTUALLY "
+        f"reported quarterly earnings in the last ~7 days (not just mentioned in passing, not "
+        f"upcoming/scheduled earnings):\n{ticker_list}\n\n"
+        f"NEWS:\n{news_text}\n\n"
+        f"Reply with ONLY a comma-separated list of tickers that genuinely reported, nothing else. "
+        f"If none did, reply exactly: NONE"
+    )
+    extracted = call_deepseek(extract_prompt, max_tokens=100, temperature=0.1, timeout=20)
+    if not extracted or extracted.strip().upper() == "NONE" or extracted.startswith("❌"):
+        return "📊 No earnings reports found for your holdings/watchlist in the last ~7 days."
+
+    valid_tickers = {t for t, _ in all_names}
+    reported = [t.strip().upper() for t in extracted.split(",") if t.strip().upper() in valid_tickers]
+    reported = reported[:8]  # cap parallel LLM calls
+    if not reported:
+        return "📊 No earnings reports found for your holdings/watchlist in the last ~7 days."
+
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        analyses = dict(zip(reported, ex.map(_earnings_reaction_core, reported)))
+
+    msg = f"📊 <b>Recent Earnings Recap</b> ({len(reported)} reported in the last ~7 days)\n\n"
+    msg += "\n\n———\n\n".join(analyses.get(t, f"{t}: analysis unavailable") for t in reported)
+    return msg
 
 
 @tool
@@ -1490,6 +1583,7 @@ tools = [
     get_ficc_data,
     get_portfolio_advice,
     earnings_reaction,
+    get_recent_earnings_recap,
     get_valuation,
     check_risk,
     get_catalyst_calendar,
@@ -1988,6 +2082,12 @@ def handle_message(text: str, chat_id: str):
             ticker = _quant_close_match.group(1).upper()
             from src.tools.quant.paper_trade import close_position
             send_message(close_position(ticker), chat_id)
+            return
+
+        if lowered in ("earnings recap", "recent earnings", "what reported recently",
+                       "recent earnings results", "how did earnings season go so far", "earnings results"):
+            send_message("⏳ Scanning the last week for earnings reports across your holdings/watchlist...", chat_id, show_buttons=False)
+            send_message(get_recent_earnings_recap.invoke({}), chat_id)
             return
 
         if lowered in ("picks", "recommendations", "what should i buy", "stock picks", "ai picks"):
