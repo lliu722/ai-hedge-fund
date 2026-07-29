@@ -15,7 +15,7 @@ import os
 import sqlite3
 from datetime import datetime, timedelta
 
-from src.tools.llm import call_deepseek, tavily_search, clean_news, fmt_snippet
+from src.tools.llm import call_deepseek, tavily_search, clean_news, fmt_snippet, filter_relevant
 
 _DB_PATH = "/app/data/research.db" if os.path.exists("/app/data") else "research.db"
 
@@ -127,11 +127,16 @@ def run_mini_dive(ticker: str) -> str:
     except Exception:
         pass
 
-    # Fresh news specifically about this company
-    news = clean_news(tavily_search(
+    # Fresh news specifically about this company. Filtered for relevance, not
+    # trusted wholesale -- a search hit isn't proof of relevance (see
+    # filter_relevant docstring; confirmed live against a different ticker).
+    # No company name available here (this fires on names NOT yet in the
+    # portfolio), so this is a ticker-only match — still meaningfully cuts
+    # noise even without a name to disambiguate against.
+    news = filter_relevant(clean_news(tavily_search(
         f"{ticker} stock company earnings business model news 2026",
         max_results=5, search_depth="basic",
-    ))
+    )), ticker)
     news_text = ""
     for a in news[:3]:
         news_text += f"- {a.get('title', '')}\n"
@@ -139,10 +144,20 @@ def run_mini_dive(ticker: str) -> str:
         if snip:
             news_text += f"  {snip}\n"
 
+    # No real relevant coverage found -- this fires unprompted (spotted a
+    # name in the news, not a direct user question), so the right move is
+    # to skip silently rather than fabricate or send an unhelpful note. The
+    # caller already treats an empty return as "skip" (see
+    # run_proactive_analysis). Also likely signals extract_new_names() had
+    # a false positive worth noting, not something to paper over.
+    if not news_text:
+        print(f"[proactive_analyst] No relevant news found for {ticker} after filtering — skipping mini-dive.")
+        return ""
+
     prompt = (
         f"You are an equity analyst. A new company just appeared in the morning news: <b>{ticker}</b>.\n"
         + (f"{price_context}\n\n" if price_context else "\n")
-        + f"NEWS MENTIONS:\n{news_text or 'No specific news found — use training knowledge.'}\n\n"
+        + f"NEWS MENTIONS:\n{news_text}\n\n"
         "Write a quick analyst note with exactly 4 sections (use these exact headers):\n\n"
         "<b>What it does</b> — one sentence: business model, how it makes money\n"
         "<b>Why it's in the news</b> — what specifically caused it to appear today\n"

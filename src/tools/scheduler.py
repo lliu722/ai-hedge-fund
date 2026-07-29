@@ -905,7 +905,7 @@ def _group_context_for_batch(tickers: list) -> dict:
     return context_by_ticker
 
 
-def _thesis_verdict(ticker: str, change: float, thesis: str, price: float, shared_context: str = "") -> str:
+def _thesis_verdict(ticker: str, change: float, thesis: str, price: float, shared_context: str = "", name: str = "") -> str:
     """One-sentence verdict: thesis intact (buy dip) or thesis concern (wait).
     Priority: saved thesis > shared same-batch sector context (see
     _group_context_for_batch) > per-ticker Tavily fallback."""
@@ -916,15 +916,21 @@ def _thesis_verdict(ticker: str, change: float, thesis: str, price: float, share
             context = shared_context
         else:
             # No thesis saved and no batch-mate in the same category —
-            # fetch recent news to form a verdict
-            from src.tools.llm import clean_news, fmt_snippet
-            results = clean_news(tavily_search(f"{ticker} stock drop news today reason", max_results=5, timeout=8))
+            # fetch recent news to form a verdict. Relevance-filtered: a
+            # search hit isn't proof it's actually about this ticker (see
+            # filter_relevant docstring — confirmed live on this exact
+            # class of search).
+            from src.tools.llm import clean_news, fmt_snippet, filter_relevant
+            results = filter_relevant(
+                clean_news(tavily_search(f"{ticker} stock drop news today reason", max_results=5, timeout=8)),
+                ticker, name,
+            )
             if results:
                 context = "Recent news:\n" + "\n".join(
                     f"- {r.get('title', '')} {fmt_snippet(r.get('content', ''), 150)}" for r in results
                 )
             else:
-                context = "No thesis or news available — assess based on ticker name and drop size only."
+                context = "No thesis or relevant news available — assess based on ticker name and drop size only."
 
         prompt = (
             f"{ticker} is down {abs(change):.1f}% today (now ${price:.2f}).\n"
@@ -1115,7 +1121,7 @@ def check_price_alerts():
                 shared_ctx = _group_context_for_batch(thesisless) if thesisless else {}
                 with ThreadPoolExecutor(max_workers=4) as ex:
                     futures = {
-                        ex.submit(_thesis_verdict, t, c, th, p, shared_ctx.get(t, "")): t
+                        ex.submit(_thesis_verdict, t, c, th, p, shared_ctx.get(t, ""), WATCHLIST_DATA.get(t, {}).get("name", "")): t
                         for t, c, p, th in drops
                     }
                     for f, t in futures.items():

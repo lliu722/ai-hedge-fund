@@ -19,7 +19,7 @@ except ImportError:
     _MEMORY_BACKEND = "memory"
 from langchain_deepseek import ChatDeepSeek
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
-from src.tools.llm import call_deepseek, tavily_search
+from src.tools.llm import call_deepseek, tavily_search, clean_news, filter_relevant
 from src.tools.research_library import save_research
 
 load_dotenv()
@@ -706,6 +706,7 @@ def get_ficc_data() -> str:
 def get_earnings_transcript(ticker: str) -> str:
     """Earnings call summary: CEO tone, guidance vs expectations, capex language, key risk, best analyst Q&A. Use for 'what did management say', 'transcript', 'call highlights'."""
     ticker = ticker.upper()
+    company_name = WATCHLIST.get(ticker, {}).get("name", "")
 
     # Fetch transcript content via Tavily
     transcript_text = ""
@@ -716,15 +717,24 @@ def get_earnings_transcript(ticker: str) -> str:
             search_depth="advanced",
             timeout=12,
         )
-        for a in results[:4]:
+        relevant = filter_relevant(clean_news(results), ticker, company_name)
+        for a in relevant[:4]:
             transcript_text += f"SOURCE: {a.get('title', '')}\n"
             if a.get("content"):
                 transcript_text += a["content"][:600] + "\n\n"
     except Exception as e:
         print(f"[telegram_bot:get_earnings_transcript] Tavily fetch error: {e}")
 
+    # No real transcript found -- refuse to fabricate. The prompt below asks
+    # for "direct quotes" and "specific numbers"; asking the model to invent
+    # those from nothing is a guaranteed hallucination, not a summary.
     if not transcript_text:
-        transcript_text = "No transcript found — summarise based on training knowledge of recent earnings."
+        return (
+            f"📞 <b>Earnings Call: {fmt(ticker)}</b>\n\n"
+            f"No transcript coverage found for {ticker} — can't produce a grounded summary of what "
+            f"management actually said without real source material. Check the company's IR site "
+            f"or a transcript service (e.g. Motley Fool, Seeking Alpha) directly."
+        )
 
     prompt = (
         f"You are a senior equity analyst summarising {ticker}'s most recent earnings call.\n\n"

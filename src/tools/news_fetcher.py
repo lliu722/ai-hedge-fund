@@ -1,37 +1,7 @@
-import re
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-from src.tools.llm import tavily_search, clean_news
-
-
-def _is_relevant(article: dict, ticker: str, company: str) -> bool:
-    """
-    A search hit is not proof of relevance — Tavily can and does return
-    articles that merely contain the query string somewhere without being
-    about the company (confirmed live: a "GEV" search pulled in a Tesla
-    article and an unrelated Peruvian copper-gold mining article; both
-    passed clean_news()'s generic junk-domain/short-content filter since
-    that filter only checks page quality, never subject relevance).
-    Require a real word-boundary match on the ticker or the company name
-    in the title/content — not a bare substring check, which would still
-    false-positive on short tickers appearing inside unrelated words
-    (e.g. "GE" inside "STAGE" or "AGE").
-
-    The ticker check is CASE-SENSITIVE deliberately — case-insensitive
-    matching turns short tickers into common-word collisions. Confirmed
-    live: a case-insensitive "BE" check passed through an unrelated SpaceX
-    article because its title contained "...Will Be Wild" (the ordinary
-    word "be", not the ticker). Real ticker mentions in financial text are
-    reliably uppercase ("BE reported..."); the company-name check stays
-    case-insensitive since names are rarely also common English words.
-    """
-    text = f"{article.get('title', '')} {article.get('content', '')}"
-    if re.search(rf'\b{re.escape(ticker)}\b', text):
-        return True
-    if company and re.search(rf'\b{re.escape(company)}\b', text, re.IGNORECASE):
-        return True
-    return False
+from src.tools.llm import tavily_search, clean_news, filter_relevant
 
 
 def get_news_for_tickers(tickers: list, days_back: int = 2, names: dict | None = None) -> dict:
@@ -63,7 +33,7 @@ def get_news_for_tickers(tickers: list, days_back: int = 2, names: dict | None =
                 topic="news", days=days_back,
             )
             articles = clean_news(results)
-            relevant = [a for a in articles if _is_relevant(a, ticker, company)]
+            relevant = filter_relevant(articles, ticker, company)
             return ticker, [
                 {
                     "title": a.get("title"),

@@ -105,6 +105,39 @@ def clean_news(results: list, min_content: int = 60) -> list:
     return out
 
 
+def filter_relevant(articles: list, entity: str, name: str = "") -> list:
+    """
+    clean_news() only filters page QUALITY (junk domains, thin content) — it
+    never checks whether a result is actually ABOUT the entity being searched
+    for. Confirmed live: a "GEV" ticker search returned 6 clean_news-passing
+    articles, all irrelevant (an unrelated mining story, a hospital chain,
+    even a different company — "GE Aerospace" vs "GE Vernova"). A search hit
+    is not proof of relevance; require a real word-boundary match on the
+    entity or its full name before trusting an article.
+
+    The entity match is CASE-SENSITIVE deliberately — case-insensitive
+    matching turns short tickers into common-word collisions (a
+    case-insensitive "BE" search matched the ordinary word "be" inside an
+    unrelated article's title, "...Will Be Wild"). Real ticker/entity
+    mentions in financial text are reliably uppercase or exact-cased; the
+    `name` check stays case-insensitive since full names are rarely also
+    common English words.
+
+    Use after clean_news() whenever results are being attributed to ONE
+    specific ticker/company (not for broad macro/thematic searches, where
+    there's no single entity to misattribute to).
+    """
+    import re as _re
+    out = []
+    for a in articles:
+        text = f"{a.get('title', '')} {a.get('content', '')}"
+        if _re.search(rf'\b{_re.escape(entity)}\b', text):
+            out.append(a)
+        elif name and _re.search(rf'\b{_re.escape(name)}\b', text, _re.IGNORECASE):
+            out.append(a)
+    return out
+
+
 def fmt_snippet(content: str, max_len: int = 150) -> str:
     """Return a clean display snippet from Tavily content, or empty string if useless."""
     c = content.strip() if content else ""
