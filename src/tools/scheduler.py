@@ -226,6 +226,56 @@ def fetch_geopolitical_pulse() -> str:
     return ""
 
 
+def _beta_adjusted_move_check(held_prices: dict, spy_change: float | None) -> str:
+    """
+    For big movers (|change| >= 5%), check whether the move is explained by
+    the stock's own beta to today's broad market move, or represents genuine
+    excess movement worth a specific explanation.
+
+    Louis's own catch: a headline claiming "the NAND/DRAM commodity cycle is
+    rolling over" because MU/WDC/SNDK fell hard is unfalsifiable narrative
+    unless it's checked against whether the WHOLE market sold off today and
+    these are just high-beta names amplifying that (the same names would also
+    have risen more than the market on the way up -- a symmetric beta effect,
+    not evidence of a structural break). Without this check, "big red number"
+    silently becomes "confident causal story" every time. This computes the
+    beta-implied move (beta x today's SPY change) vs the actual move, so the
+    prompt can require real justification before using words like "rolling
+    over" or "thesis broken".
+    """
+    if spy_change is None:
+        return "Market benchmark (SPY) unavailable today — cannot beta-adjust moves; do not claim a move is 'thesis-specific' or a 'cycle turn' without another concrete, named catalyst."
+
+    big_movers = [(t, d.get("change_pct")) for t, d in held_prices.items()
+                  if d and d.get("change_pct") is not None and abs(d["change_pct"]) >= 5.0]
+    if not big_movers:
+        return f"S&P 500 (SPY) today: {spy_change:+.2f}%. No individual positions moved ≥5%."
+
+    try:
+        import yfinance as yf
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            betas = dict(zip(
+                [t for t, _ in big_movers],
+                ex.map(lambda t: yf.Ticker(t).info.get("beta"), [t for t, _ in big_movers]),
+            ))
+    except Exception:
+        betas = {}
+
+    lines = [f"S&P 500 (SPY) today: {spy_change:+.2f}%."]
+    for t, chg in big_movers:
+        beta = betas.get(t)
+        if beta:
+            implied = beta * spy_change
+            excess = chg - implied
+            lines.append(
+                f"- {t}: actual {chg:+.2f}%, beta {beta:.2f} implies ~{implied:+.2f}% from market beta alone "
+                f"-> excess {excess:+.2f}pp {'(mostly beta, not name-specific news)' if abs(excess) < abs(implied) * 0.5 or abs(excess) < 2 else '(real excess move — a specific catalyst is worth naming)'}"
+            )
+        else:
+            lines.append(f"- {t}: actual {chg:+.2f}% (beta unavailable — cannot beta-adjust, don't assume it's market-wide OR name-specific without other evidence)")
+    return "\n".join(lines)
+
+
 # ── Morning Briefing ──────────────────────────────────────────────────────────
 
 def send_morning_briefing():
@@ -260,7 +310,7 @@ def send_morning_briefing():
         all_tickers     = list(WATCHLIST_DATA.keys())
 
         with ThreadPoolExecutor(max_workers=5) as ex:
-            f_prices  = ex.submit(get_live_prices, all_tickers)
+            f_prices  = ex.submit(get_live_prices, all_tickers + ["SPY"])
             f_macro   = ex.submit(get_macro_news)
             f_dates   = ex.submit(get_earnings_dates, held_tickers)
             f_events  = ex.submit(_fetch_last_night_events)
@@ -271,6 +321,9 @@ def send_morning_briefing():
             dates       = f_dates.result()
             last_night  = f_events.result()
             geo_pulse   = f_geo.result()
+
+        spy_change = (prices.get("SPY") or {}).get("change_pct")
+        beta_check_text = _beta_adjusted_move_check(held_prices, spy_change)
 
         # Read-through: check if any trigger tickers moved big overnight
         from src.tools.read_through import get_morning_read_through
@@ -349,6 +402,9 @@ GEOPOLITICAL PULSE (1 line per geography):
 THEME PERFORMANCE:
 {chr(10).join(theme_lines) if theme_lines else "No theme data."}
 
+BETA-ADJUSTED MOVE CHECK (for positions that moved ≥5% today):
+{beta_check_text}
+
 UPCOMING EARNINGS (next 14 days):
 {earnings_text}
 
@@ -356,6 +412,7 @@ Write exactly 3 sections:
 
 <b>📰 Headlines</b>
 Filtered overnight headlines — only what genuinely matters. If last night had earnings or events, lead with those. If read-through alerts fired, name the downstream holdings affected. Skip noise.
+CRITICAL — do not manufacture causal stories from price action alone: before using language implying a structural/cyclical break ("cycle rolling over", "thesis broken", "trend reversing"), check the BETA-ADJUSTED MOVE CHECK above. If a mover's excess move (beyond what its own beta times today's market move would predict) is small, say plainly that it looks like broad market beta, not a name- or sector-specific event — do NOT invent a cyclical narrative just because the raw percentage looks dramatic. Only use strong causal language when there is BOTH a real excess move AND a specific named catalyst (an actual reported number, guidance change, or news event) from the inputs above — never price action alone.
 
 <b>🌍 What This Means</b>
 Two parts in one section:
