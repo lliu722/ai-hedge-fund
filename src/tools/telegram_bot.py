@@ -147,14 +147,7 @@ FORMATTING — no exceptions:
 
 # ── Telegram Helpers ──────────────────────────────────────────────────────────
 
-def clean_for_telegram(text: str) -> str:
-    text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
-    text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
-    text = re.sub(r'#{1,6}\s+', '', text)
-    text = re.sub(r'\|[^\n]+\|', '', text)
-    text = re.sub(r'-{3,}', '—', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
+from src.tools.notify import clean_for_telegram  # noqa: E402 -- single shared copy; was duplicated here and could drift out of sync with notify.py's version
 
 
 def send_message(text: str, chat_id: str = None, show_buttons: bool = True):

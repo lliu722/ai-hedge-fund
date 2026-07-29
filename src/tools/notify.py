@@ -1,9 +1,31 @@
 import os
+import re
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def clean_for_telegram(text: str) -> str:
+    """
+    Convert LLM-generated markdown to Telegram HTML (parse_mode="HTML" has no
+    idea what **bold** or # headers mean -- they go out as literal characters
+    otherwise). send_message() in telegram_bot.py always ran this; send_telegram()
+    here never did, so any scheduled message (morning briefing, alerts, etc.)
+    built from raw LLM text could ship with literal "**word**" asterisks whenever
+    the model slipped into markdown despite prompt instructions to use <b> tags.
+    Moved here and applied inside send_telegram/send_telegram_with_buttons so
+    every call site gets it automatically instead of each one having to remember.
+    """
+    text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'\*(.*?)\*', r'<i>\1</i>', text)
+    text = re.sub(r'#{1,6}\s+', '', text)
+    text = re.sub(r'\|[^\n]+\|', '', text)
+    text = re.sub(r'-{3,}', '—', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
 
 def send_telegram(message: str) -> bool:
     """Send a message to your Telegram bot. Auto-splits at 4096 chars."""
@@ -15,6 +37,7 @@ def send_telegram(message: str) -> bool:
         return False
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
+    message = clean_for_telegram(message)
 
     # Split into chunks of 4096 chars, breaking on newlines where possible
     chunks = []
@@ -51,7 +74,7 @@ def send_telegram_with_buttons(message: str, buttons: list[list[dict]]) -> bool:
         import json
         payload = {
             "chat_id": chat_id,
-            "text": message[:4096],
+            "text": clean_for_telegram(message)[:4096],
             "parse_mode": "HTML",
             "reply_markup": json.dumps({"inline_keyboard": buttons}),
         }
