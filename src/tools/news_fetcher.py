@@ -1,54 +1,63 @@
-import os
-from tavily import TavilyClient
 from datetime import datetime
-from src.tools.llm import clean_news
+from concurrent.futures import ThreadPoolExecutor
 
-client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+from src.tools.llm import tavily_search, clean_news
 
-THEME_CLUSTERS = {
-    "AI_compute": ["NVDA", "ALAB", "AMD"],
-    "semiconductors": ["TSM", "ASML", "ARM", "AVGO"],
-    "AI_software_energy": ["PLTR", "APP", "CEG"],
-}
 
-def get_news_for_tickers(tickers, days_back=2):
-    results = {ticker: [] for ticker in tickers}
-    for cluster_name, ctickers in THEME_CLUSTERS.items():
-        relevant = [t for t in ctickers if t in tickers]
-        if not relevant:
-            continue
-        query = " ".join(relevant) + " stock news earnings AI"
+def get_news_for_tickers(tickers: list, days_back: int = 2) -> dict:
+    """
+    Fetch recent news per ticker, one real search per ticker (parallelized),
+    not limited to any fixed subset — works for any ticker passed in.
+
+    Previously this searched only 3 hardcoded theme clusters covering 8
+    tickers total (NVDA/ALAB/AMD/TSM/ASML/ARM/AVGO/PLTR/APP/CEG); any other
+    ticker silently got back an empty list regardless of what news actually
+    existed for it, starving news context for the vast majority of a
+    100+-name portfolio across deep_dive(), get_news(), and earnings_reaction.
+    days_back was also accepted but never actually passed to the search —
+    dead parameter, no real recency filtering. Both fixed here.
+    """
+    def _fetch_one(ticker: str) -> tuple[str, list]:
         try:
-            response = client.search(query=query, max_results=10, search_depth="basic", include_answer=False)
-            articles = clean_news(response.get("results", []))
-            for article in articles:
-                title = article.get("title", "").upper()
-                content = article.get("content", "").upper()
-                for ticker in relevant:
-                    if ticker in title or ticker in content:
-                        results[ticker].append({
-                            "title": article.get("title"),
-                            "url": article.get("url"),
-                            "content": article.get("content", "")[:500],
-                            "published_date": article.get("published_date"),
-                        })
+            results = tavily_search(
+                f"{ticker} stock news",
+                max_results=8, search_depth="basic",
+                topic="news", days=days_back,
+            )
+            articles = clean_news(results)
+            return ticker, [
+                {
+                    "title": a.get("title"),
+                    "url": a.get("url"),
+                    "content": (a.get("content", "") or "")[:500],
+                    "published_date": a.get("published_date"),
+                }
+                for a in articles
+            ]
         except Exception as e:
-            print(f"Error fetching news for {cluster_name}: {e}")
-    return results
+            print(f"Error fetching news for {ticker}: {e}")
+            return ticker, []
+
+    if not tickers:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(8, len(tickers))) as ex:
+        return dict(ex.map(_fetch_one, tickers))
+
 
 def get_macro_news():
     query = "AI chip semiconductor export control Fed rates tech earnings"
     try:
-        response = client.search(query=query, max_results=8, search_depth="basic", include_answer=False)
-        return clean_news(response.get("results", []))
+        results = tavily_search(query, max_results=8, search_depth="basic", topic="news", days=2)
+        return clean_news(results)
     except Exception as e:
         print(f"Error fetching macro news: {e}")
         return []
 
+
 if __name__ == "__main__":
     print("Testing news fetcher...")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-    tickers = ["NVDA", "TSM", "AVGO"]
+    tickers = ["NVDA", "TSM", "AVGO", "BE", "GEV"]
     news = get_news_for_tickers(tickers)
     for ticker, articles in news.items():
         print(f"\n{ticker}: {len(articles)} articles found")
