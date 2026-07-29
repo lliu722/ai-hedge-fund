@@ -794,14 +794,57 @@ Rules:
 
 # ── Thesis Verdict Helper ─────────────────────────────────────────────────────
 
-def _thesis_verdict(ticker: str, change: float, thesis: str, price: float) -> str:
+def _group_context_for_batch(tickers: list) -> dict:
+    """
+    For tickers in the same alert batch that share a PORTFOLIO_CATEGORIES
+    bucket (e.g. MU/WDC/SNDK all "AI-Chips"), do ONE shared news search per
+    bucket instead of N independent per-ticker searches.
+
+    Without this, two genuinely correlated names with no saved thesis (see
+    _thesis_verdict) get evaluated by two fully independent searches + LLM
+    calls with zero awareness of each other — whichever specific articles
+    each search happens to surface can produce contradictory-sounding
+    verdicts (one "thesis intact", one "thesis concern") for what's actually
+    the same sector-wide move. Grounding same-batch, same-category tickers in
+    one shared search fixes that at the source. Returns {ticker: shared_context}
+    only for tickers worth sharing (category has 2+ tickers in this batch).
+    """
+    try:
+        from src.tools.llm import clean_news, fmt_snippet
+    except Exception:
+        return {}
+
+    cats = _categorise(tickers)
+    context_by_ticker: dict = {}
+    for cat, cat_tickers in cats.items():
+        if cat == "Other" or len(cat_tickers) < 2:
+            continue
+        try:
+            results = clean_news(tavily_search(f"{cat} stocks selloff drop news today", max_results=5, timeout=8))
+            if not results:
+                continue
+            shared = f"Recent news for the {cat} sector (multiple names in this group moved together today):\n" + "\n".join(
+                f"- {r.get('title', '')} {fmt_snippet(r.get('content', ''), 150)}" for r in results
+            )
+            for t in cat_tickers:
+                context_by_ticker[t] = shared
+        except Exception:
+            continue
+    return context_by_ticker
+
+
+def _thesis_verdict(ticker: str, change: float, thesis: str, price: float, shared_context: str = "") -> str:
     """One-sentence verdict: thesis intact (buy dip) or thesis concern (wait).
-    If no thesis stored, fetches context from Tavily and generates verdict from public info."""
+    Priority: saved thesis > shared same-batch sector context (see
+    _group_context_for_batch) > per-ticker Tavily fallback."""
     try:
         if thesis:
             context = f"Investment thesis on file: {thesis[:300]}"
+        elif shared_context:
+            context = shared_context
         else:
-            # No thesis saved — fetch recent news to form a verdict
+            # No thesis saved and no batch-mate in the same category —
+            # fetch recent news to form a verdict
             from src.tools.llm import clean_news, fmt_snippet
             results = clean_news(tavily_search(f"{ticker} stock drop news today reason", max_results=5, timeout=8))
             if results:
@@ -993,8 +1036,16 @@ def check_price_alerts():
             drops = [(t, c, p, th) for t, c, p, th in alert_items if c < 0]
             verdicts = {}
             if drops:
+                # Tickers with no saved thesis get a shared sector-level search
+                # instead of independent per-ticker searches if a batch-mate
+                # shares their category — see _group_context_for_batch.
+                thesisless = [t for t, c, p, th in drops if not th]
+                shared_ctx = _group_context_for_batch(thesisless) if thesisless else {}
                 with ThreadPoolExecutor(max_workers=4) as ex:
-                    futures = {ex.submit(_thesis_verdict, t, c, th, p): t for t, c, p, th in drops}
+                    futures = {
+                        ex.submit(_thesis_verdict, t, c, th, p, shared_ctx.get(t, "")): t
+                        for t, c, p, th in drops
+                    }
                     for f, t in futures.items():
                         try:
                             verdicts[t] = f.result(timeout=20)
