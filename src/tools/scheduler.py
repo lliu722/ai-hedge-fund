@@ -376,13 +376,18 @@ Rules:
 
         header = f"🌅 <b>Morning Briefing — {datetime.now().strftime('%A %d %B %Y')}</b>\n\n"
 
-        # Portfolio section — all held positions, sorted by biggest mover first
+        # Portfolio section — only positions moving ≥2% overnight, sorted by
+        # biggest mover first (was: every held position, unconditionally —
+        # for a 47-position book that's mostly noise every single morning;
+        # same ≥2% bar the watchlist section below already uses).
         port_rows = []
         for t in held_tickers:
             d = prices.get(t)
             if not d:
                 continue
             chg = d.get("change_pct") or 0
+            if abs(chg) < 2.0:
+                continue
             price = d.get("price")
             direction = "📈" if chg > 0 else "📉"
             line = f"{direction} <b>{fmt(t)}</b>: ${price} ({chg:+.2f}%)"
@@ -392,8 +397,11 @@ Rules:
                 line += f" · <i>{pnl:+.1f}%</i>"
             port_rows.append((abs(chg), line))
         port_rows.sort(key=lambda x: x[0], reverse=True)
-        price_block = f"<b>📊 Portfolio ({len(portfolio_data)} positions):</b>\n"
-        price_block += "\n".join(row for _, row in port_rows) + "\n"
+        if port_rows:
+            price_block = f"<b>📊 Portfolio movers (≥2%, of {len(portfolio_data)} positions):</b>\n"
+            price_block += "\n".join(row for _, row in port_rows[:15]) + "\n"
+        else:
+            price_block = f"<b>📊 Portfolio:</b> no positions moved ≥2% overnight ({len(portfolio_data)} held).\n"
 
         # Watchlist section — only movers ≥2%, sorted by abs move, capped at 15
         wl_rows = []
