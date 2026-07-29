@@ -412,7 +412,6 @@ Write exactly 3 sections:
 
 <b>📰 Headlines</b>
 Filtered overnight headlines — only what genuinely matters. If last night had earnings or events, lead with those. If read-through alerts fired, name the downstream holdings affected. Skip noise.
-CRITICAL — do not manufacture causal stories from price action alone: before using language implying a structural/cyclical break ("cycle rolling over", "thesis broken", "trend reversing"), check the BETA-ADJUSTED MOVE CHECK above. If a mover's excess move (beyond what its own beta times today's market move would predict) is small, say plainly that it looks like broad market beta, not a name- or sector-specific event — do NOT invent a cyclical narrative just because the raw percentage looks dramatic. Only use strong causal language when there is BOTH a real excess move AND a specific named catalyst (an actual reported number, guidance change, or news event) from the inputs above — never price action alone.
 
 <b>🌍 What This Means</b>
 Two parts in one section:
@@ -427,7 +426,8 @@ Rules:
 - No markdown tables, no ### headers
 - Use • for bullet points within sections
 - Be direct and specific — name tickers, not just themes
-- Format for Telegram using <b>bold</b> for tickers and key terms"""
+- Format for Telegram using <b>bold</b> for tickers and key terms
+- CRITICAL, applies to ALL THREE sections above (Headlines, What This Means, AND AI Sector — a sector-wide claim like "AI hardware momentum stalling" needs the exact same scrutiny as a single-name claim): do not manufacture causal stories from price action alone. Before using language implying a structural/cyclical break ("cycle rolling over", "thesis broken", "trend reversing", "momentum stalling", "sector rotation out of AI"), check the BETA-ADJUSTED MOVE CHECK above. If a mover's excess move (beyond what its own beta times today's market move would predict) is small, say plainly that it looks like broad market beta, not a name- or sector-specific event — do NOT invent a cyclical narrative just because the raw percentage looks dramatic. Only use strong causal language when there is BOTH a real excess move AND a specific named catalyst (an actual reported number, guidance change, or news event) from the inputs above — never price action alone."""
 
         briefing = call_deepseek(prompt, max_tokens=600, temperature=0.3, timeout=60) or "Could not generate AI briefing."
 
