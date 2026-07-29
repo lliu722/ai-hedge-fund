@@ -7,7 +7,7 @@ from src.tools.sec_filings import get_filing_summary
 from src.tools.llm import call_deepseek, fmt_snippet
 
 
-def deep_dive(ticker: str) -> str:
+def deep_dive(ticker: str, name: str = "") -> str:
     print(f"\n🔬 Deep dive: {ticker}")
 
     # Pull saved notes + earnings history from research library
@@ -29,7 +29,10 @@ def deep_dive(ticker: str) -> str:
     with ThreadPoolExecutor(max_workers=5) as ex:
         f_price    = ex.submit(get_live_prices, [ticker])
         f_filings  = ex.submit(get_filing_summary, ticker)
-        f_news     = ex.submit(get_news_for_tickers, [ticker])
+        f_news     = ex.submit(
+            get_news_for_tickers, [ticker],
+            days_back=2, names={ticker: name} if name else None,
+        )
         f_notes    = ex.submit(fetch_notes)
         f_earnings = ex.submit(fetch_earnings_history)
 

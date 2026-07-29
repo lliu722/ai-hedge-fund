@@ -213,7 +213,8 @@ def deep_dive(ticker: str) -> str:
     """Full AI research report: bull/bear case, catalysts, valuation, verdict. Use for 'deep dive', 'analyse', 'research X'."""
     from src.tools.deep_dive import deep_dive as _deep_dive
     resolved = _resolve_ticker(ticker).upper()
-    result = _deep_dive(resolved)
+    company_name = WATCHLIST.get(resolved, {}).get("name", "")
+    result = _deep_dive(resolved, name=company_name)
     try:
         save_research(resolved, "deep_dive", result)
     except Exception as e:
@@ -245,7 +246,8 @@ def get_news(ticker: str = None) -> str:
     from src.tools.news_fetcher import get_news_for_tickers, get_macro_news
     if ticker:
         t = ticker.upper()
-        articles = get_news_for_tickers([t]).get(t, [])
+        company_name = WATCHLIST.get(t, {}).get("name", "")
+        articles = get_news_for_tickers([t], names={t: company_name} if company_name else None).get(t, [])
         if articles:
             msg = f"🗞 <b>Latest news: {fmt(t)}</b>\n\n"
             for a in articles[:5]:
@@ -440,10 +442,11 @@ def _earnings_reaction_core(ticker: str) -> str:
     from concurrent.futures import ThreadPoolExecutor
 
     ticker = ticker.upper()
+    company_name = WATCHLIST.get(ticker, {}).get("name", "")
 
     with ThreadPoolExecutor(max_workers=2) as ex:
         f_price = ex.submit(get_live_prices, [ticker], True)
-        f_news  = ex.submit(get_news_for_tickers, [ticker])
+        f_news  = ex.submit(get_news_for_tickers, [ticker], names={ticker: company_name} if company_name else None)
 
     try:
         price_data  = f_price.result(timeout=20).get(ticker, {})
