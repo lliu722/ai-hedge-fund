@@ -83,6 +83,13 @@ def get_universe(notion_tickers: list[str], mode: str = "notion") -> list[str]:
     mode='notion'  — 98 Notion names only
     mode='full'    — S&P 500 + Notion names merged, deduped
     """
+    # Notion rows include things yfinance cannot price as equities — crypto
+    # (routed to CoinGecko elsewhere), indices like ^HSI/.VIX, and placeholder
+    # rows such as "— (SECTOR)". Passing those into a factor screen or
+    # backtest produces guaranteed API failures and silently skewed universes.
+    from src.tools.prices import tradable_symbol
+    notion_tickers = [t for t in notion_tickers if tradable_symbol(t)]
+
     if mode == "notion":
         return list(dict.fromkeys(notion_tickers))   # deduped, order preserved
 

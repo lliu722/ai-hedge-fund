@@ -224,6 +224,34 @@ def _fetch_batch_fast(tickers: list) -> dict:
     return results
 
 
+def tradable_symbol(ticker: str) -> str | None:
+    """
+    The yfinance symbol for a ticker yfinance can price as an equity/ETF,
+    or None if it can't (crypto -> CoinGecko, indices, junk/placeholder rows).
+
+    Nine modules called yfinance directly with zero normalization, so raw
+    Notion rows like ".VIX", "MATIC", "^HSI" and the literal placeholder
+    "— (SECTOR)" were being sent to the API to fail. Several then hand-rolled
+    their own partial exclusion lists (risk.py hardcoded its own copy of the
+    crypto set, which drifts from CRYPTO_IDS and missed indices entirely).
+    One shared filter instead of four partial ones.
+    """
+    norm = normalize_ticker(ticker)
+    if not norm or norm.startswith("CRYPTO:") or norm.startswith("^"):
+        return None
+    return norm
+
+
+def equity_symbols(tickers) -> dict:
+    """{original ticker: yfinance symbol} for tickers priceable as equities."""
+    out = {}
+    for t in tickers or []:
+        s = tradable_symbol(t)
+        if s:
+            out[t] = s
+    return out
+
+
 def pnl_pct(price, avg_cost):
     """
     Percent gain/loss vs cost basis, or None when not meaningfully computable.

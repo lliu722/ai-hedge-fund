@@ -45,7 +45,14 @@ PEER_GROUPS = {
 
 def _fetch_valuation(ticker: str) -> dict:
     try:
-        info = yf.Ticker(ticker).info
+        # Agent-supplied ticker — normalize before the call. Valuation
+        # multiples are meaningless for crypto/indices anyway, so bail
+        # rather than return a dict full of Nones that reads like real data.
+        from src.tools.prices import tradable_symbol
+        symbol = tradable_symbol(ticker)
+        if not symbol:
+            return {"ticker": ticker, "error": "not a priceable equity (crypto, index, or invalid symbol)"}
+        info = yf.Ticker(symbol).info
         return {
             "ticker": ticker,
             "name": info.get("shortName", ticker),

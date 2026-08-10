@@ -21,15 +21,8 @@ def _has_earnings(ticker: str) -> bool:
     also shows 401 "Invalid Crumb" rate-limit errors), and a constant stream
     of expected 404s is exactly what hides an unexpected one.
     """
-    from src.tools.prices import normalize_ticker, CRYPTO_IDS
-    if not ticker or ticker in CRYPTO_IDS:
-        return False
-    norm = normalize_ticker(ticker)
-    # normalize_ticker returns "" for junk/placeholder rows and a "CRYPTO:"
-    # prefix for coins routed to CoinGecko.
-    if not norm or norm.startswith("CRYPTO:") or norm.startswith("^"):
-        return False
-    return True
+    from src.tools.prices import tradable_symbol
+    return bool(tradable_symbol(ticker))
 
 
 def _fetch_one(ticker):

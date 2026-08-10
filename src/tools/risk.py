@@ -64,9 +64,17 @@ def get_risk_report(holdings: dict, prices: dict) -> str:
         conc_msg += f"• <b>{t}</b> ({name}): {pct:.1f}%{flag}\n"
 
     # ── 2. Correlation clusters ───────────────────────────────────────────────
-    # Only US equities for correlation (yfinance handles these cleanly)
-    us_held = [t for t in held if not any(t.endswith(s) for s in [".HK", ".SS", ".SZ", ".TW"])
-               and t not in {"BTC", "ETH", "SOL", "MATIC", "POL"}][:20]
+    # Only US equities for correlation (yfinance handles these cleanly).
+    # The foreign-suffix filter is the deliberate US-only intent; the
+    # tradable_symbol() check is the separate "is this even a priceable
+    # equity" filter. This previously hardcoded its own crypto set, which
+    # both duplicated CRYPTO_IDS (free to drift) and missed indices and
+    # placeholder rows entirely — so ".VIX" and "— (SECTOR)" were still
+    # being sent to yfinance to 404.
+    from src.tools.prices import tradable_symbol
+    us_held = [t for t in held
+               if not any(t.endswith(s) for s in [".HK", ".SS", ".SZ", ".TW"])
+               and tradable_symbol(t)][:20]
 
     corr_msg = ""
     try:
