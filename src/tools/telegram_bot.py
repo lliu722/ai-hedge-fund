@@ -179,6 +179,13 @@ def _system_prompt_now() -> str:
 
 from src.tools.notify import clean_for_telegram  # noqa: E402 -- single shared copy; was duplicated here and could drift out of sync with notify.py's version
 
+# Client-side socket timeout for outbound Telegram sends from THIS module.
+# notify.py defines its own _SEND_TIMEOUT for its senders; this is the
+# telegram_bot.py counterpart. Both exist because the two modules send
+# independently — a missing definition here crash-looped the bot in
+# production (NameError at first send, after a clean import).
+_SEND_TIMEOUT = 20
+
 
 def send_message(text: str, chat_id: str = None, show_buttons: bool = True):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
