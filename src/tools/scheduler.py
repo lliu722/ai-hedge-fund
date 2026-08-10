@@ -282,7 +282,7 @@ def send_morning_briefing():
     """Build and send the full morning briefing."""
     print(f"[{datetime.now().strftime('%H:%M')}] Running morning briefing...")
     try:
-        from src.tools.prices import get_live_prices
+        from src.tools.prices import pnl_pct as _pnl, get_live_prices
         from src.tools.news_fetcher import get_macro_news
         from src.tools.earnings_calendar import get_earnings_dates
         from src.tools.notify import send_telegram
@@ -455,7 +455,6 @@ Rules:
             price = d.get("price")
             direction = "📈" if chg > 0 else "📉"
             line = f"{direction} <b>{fmt(t)}</b>: ${price} ({chg:+.2f}%)"
-            from src.tools.prices import pnl_pct as _pnl
             pnl = _pnl(price, portfolio_data.get(t, {}).get("avg_cost"))
             if pnl is not None:
                 line += f" · <i>{pnl:+.1f}%</i>"
@@ -1489,17 +1488,20 @@ def _fetch_market_news(query: str, label: str, held: dict | None = None) -> str:
         return ""
 
 
-def send_market_close_alert(market: str):
-    """Theme-grouped portfolio close summary. Config-driven per market."""
+def send_market_close_alert(market: str) -> bool:
+    """Theme-grouped portfolio close summary. Config-driven per market.
+
+    Returns True if a summary was actually sent, False if skipped
+    (weekend/holiday) — callers must not claim "sent" without checking."""
     if _is_weekend():
         print(f"[{datetime.now().strftime('%H:%M')}] Weekend — close alert skipped.")
-        return
+        return False
     if _is_market_holiday(market):
         print(f"[{datetime.now().strftime('%H:%M')}] {market} holiday — close alert skipped.")
-        return
+        return False
     print(f"[{datetime.now().strftime('%H:%M')}] Market close alert: {market}")
     try:
-        from src.tools.prices import get_live_prices
+        from src.tools.prices import pnl_pct as _pnl, get_live_prices
         from src.tools.notify import send_telegram
 
         cfg  = _MARKET_CFG.get(market, _MARKET_CFG["US"])
@@ -1527,7 +1529,6 @@ def send_market_close_alert(market: str):
                 chg = d.get("change_pct") or 0
                 price = d.get("price")
                 shares = held.get(t, {}).get("shares", 0)
-                from src.tools.prices import pnl_pct as _pnl
                 pnl = _pnl(price, held.get(t, {}).get("avg_cost"))
                 moves.append((t, chg, price, pnl))
                 if chg > 0:
@@ -1586,9 +1587,11 @@ def send_market_close_alert(market: str):
         market_held = {t: held[t] for t in tickers}
         _shadow_portfolio_message(summary_lines, market_held, market)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} close alert sent.")
+        return True
 
     except Exception as e:
         print(f"Market close alert error: {e}")
+    return False
 
 
 # ── Breaking News Alerts ──────────────────────────────────────────────────────
@@ -1749,17 +1752,20 @@ def check_alerts_report() -> str:
 
 # ── Market Open Alerts ────────────────────────────────────────────────────────
 
-def send_market_open_alert(market: str):
-    """Config-driven market open brief. Add a new market by adding an entry to _MARKET_CFG."""
+def send_market_open_alert(market: str) -> bool:
+    """Config-driven market open brief. Add a new market by adding an entry to _MARKET_CFG.
+
+    Returns True if a brief was actually sent, False if skipped (weekend/
+    holiday) — callers must not claim "sent" without checking."""
     if _is_weekend():
         print(f"[{datetime.now().strftime('%H:%M')}] Weekend — open alert skipped.")
-        return
+        return False
     if _is_market_holiday(market):
         print(f"[{datetime.now().strftime('%H:%M')}] {market} holiday — open alert skipped.")
-        return
+        return False
     print(f"[{datetime.now().strftime('%H:%M')}] Market open alert: {market}")
     try:
-        from src.tools.prices import get_live_prices, normalize_ticker
+        from src.tools.prices import pnl_pct as _pnl, get_live_prices, normalize_ticker
         from src.tools.notify import send_telegram
         import yfinance as yf
 
@@ -1874,7 +1880,6 @@ def send_market_open_alert(market: str):
                     return (abs(pct), line)
                 p     = prices.get(ticker, {})
                 price = p.get("price")
-                from src.tools.prices import pnl_pct as _pnl
                 pnl = _pnl(price, avg_cost)
                 if pnl is not None:
                     emoji = "🟢" if pnl > 0 else "🔴"
@@ -1896,9 +1901,11 @@ def send_market_open_alert(market: str):
 
         send_telegram(msg)
         print(f"[{datetime.now().strftime('%H:%M')}] {market} open alert sent.")
+        return True
 
     except Exception as e:
         print(f"Market open alert error ({market}): {e}")
+    return False
 
 
 # ── Monthly 复盘 ──────────────────────────────────────────────────────────────

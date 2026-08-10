@@ -148,6 +148,32 @@ FORMATTING — no exceptions:
 - Always show ticker with company name: {fmt("NVDA")} not just NVDA
 - Respond in English unless user writes in Chinese"""
 
+def _system_prompt_now() -> str:
+    """
+    SYSTEM_PROMPT plus the current date/time, injected per-invocation.
+
+    The model has no inherent clock, and SYSTEM_PROMPT is built once at import
+    on a process that stays up for weeks — so a date baked in there would be
+    stale almost immediately. Without this the agent literally cannot tell it
+    is Saturday, which is why it would state a market was open or closed on a
+    weekend. Paired with the get_market_status tool for authoritative
+    open/closed status (this line gives it the clock; the tool gives it the
+    exchange calendar).
+    """
+    from datetime import timezone as _tz, timedelta as _td
+    hkt = datetime.now(_tz(_td(hours=8)))
+    is_weekend = hkt.weekday() >= 5
+    return (
+        f"{SYSTEM_PROMPT}\n\n"
+        f"CURRENT TIME: {hkt.strftime('%A %d %B %Y, %H:%M')} HKT"
+        f"{' — it is the WEEKEND, all equity markets are closed.' if is_weekend else '.'}\n"
+        "Never guess the date, day of week, or whether a market is open. "
+        "For anything about a market being open/closed or about to open/close, "
+        "call get_market_status first — it is the only authoritative source "
+        "(it accounts for weekends, public holidays, and each exchange's hours)."
+    )
+
+
 # ── Telegram Helpers ──────────────────────────────────────────────────────────
 
 from src.tools.notify import clean_for_telegram  # noqa: E402 -- single shared copy; was duplicated here and could drift out of sync with notify.py's version
@@ -323,7 +349,7 @@ def get_earnings_calendar() -> str:
 @tool
 def get_portfolio() -> str:
     """Held positions with live prices, dollar value, P&L vs avg cost. Use for 'portfolio', 'holdings', 'how am I doing'."""
-    from src.tools.prices import get_live_prices
+    from src.tools.prices import pnl_pct as _pnl, get_live_prices
     prices = get_live_prices(list(PORTFOLIO.keys()))
     msg = f"💼 <b>Portfolio — {len(PORTFOLIO)} Held Positions</b>\n"
     msg += f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
@@ -342,7 +368,6 @@ def get_portfolio() -> str:
         value = shares * price
         cost_basis = shares * avg_cost
         dollar_pnl = value - cost_basis
-        from src.tools.prices import pnl_pct as _pnl
         pnl_pct = _pnl(price, avg_cost)
         total_value += value
         total_cost += cost_basis
@@ -1082,11 +1107,47 @@ def add_ticker_to_watchlist(ticker: str, company_name: str = "") -> str:
 
 
 @tool
+def get_market_status() -> str:
+    """Which markets are open RIGHT NOW, plus today's date/day and weekend/holiday status. ALWAYS call this before saying anything about a market being open, closed, or about to open/close — you cannot know the current day or time without it. Use for 'is the market open', 'has HK closed', 'what day is it'."""
+    from src.tools.scheduler import (
+        _open_markets, _is_weekend, _is_market_holiday,
+        MARKET_HOURS_UTC, _now_hkt_str,
+    )
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    open_now = _open_markets()
+    lines = [
+        f"🕐 <b>Market status</b>",
+        f"Now: {_now_hkt_str()} HKT · {now.strftime('%A')} ({now.strftime('%Y-%m-%d')} UTC)",
+    ]
+    if _is_weekend():
+        lines.append("📅 <b>It is the weekend — all equity markets are CLOSED.</b>")
+    elif open_now:
+        lines.append(f"🟢 Open now: {', '.join(open_now)}")
+    else:
+        lines.append("🔴 No markets currently open (between sessions).")
+
+    closed_today = [m for m in MARKET_HOURS_UTC if _is_market_holiday(m)]
+    if closed_today:
+        lines.append(f"🎌 Public holiday today: {', '.join(closed_today)}")
+    return "\n".join(lines)
+
+
+@tool
 def get_market_open_brief(market: str = "US") -> str:
     """On-demand market open brief: pre-market movers, today's earnings, economic calendar. market='US' or 'HK'. Use for 'what's happening before US open', 'HK open brief', 'pre-market movers'."""
     from src.tools.scheduler import send_market_open_alert
-    send_market_open_alert(market.upper())
-    return f"✅ {market.upper()} market open brief sent to Telegram."
+    m = market.upper()
+    # send_market_open_alert returns False when it skipped (weekend/holiday).
+    # Previously this claimed "✅ sent" unconditionally, so on a Saturday the
+    # agent told the user a brief had been sent that never was.
+    if send_market_open_alert(m):
+        return f"✅ {m} market open brief sent to Telegram."
+    return (
+        f"No {m} open brief sent — the {m} market is closed today (weekend or public holiday). "
+        f"Tell the user that plainly; do not claim a brief was sent."
+    )
 
 
 @tool
@@ -1657,6 +1718,7 @@ tools = [
     switch_account,
     list_portfolios,
     get_market_open_brief,
+    get_market_status,
     manage_watchlist_target,
     add_ticker_to_watchlist,
     get_theme_health,
@@ -2174,7 +2236,7 @@ def handle_message(text: str, chat_id: str):
         result = agent.invoke(
             {
                 "messages": [
-                    SystemMessage(content=SYSTEM_PROMPT),
+                    SystemMessage(content=_system_prompt_now()),
                     HumanMessage(content=text),
                 ]
             },
@@ -2194,7 +2256,7 @@ def handle_message(text: str, chat_id: str):
         if "ToolMessage" in err or "tool_calls" in err:
             try:
                 result = agent.invoke(
-                    {"messages": [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=text)]},
+                    {"messages": [SystemMessage(content=_system_prompt_now()), HumanMessage(content=text)]},
                     config={"configurable": {"thread_id": f"{chat_id}_fresh"}}
                 )
                 response = result["messages"][-1].content

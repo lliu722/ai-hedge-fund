@@ -44,4 +44,4 @@ docs/
 - Run live bot: `poetry run python -m src.tools.telegram_bot`
 - Deploy: `git push origin main` (Railway auto-deploys in ~2 min)
 - Test: `poetry run pytest tests/ -x -q`
-- Smoke check (must print 48): `poetry run python -c "from src.tools.telegram_bot import tools; print(len(tools))"`
+- Smoke check (must print 49): `poetry run python -c "from src.tools.telegram_bot import tools; print(len(tools))"`
