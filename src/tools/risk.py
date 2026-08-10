@@ -6,6 +6,7 @@ import yfinance as yf
 import numpy as np
 from datetime import datetime
 from src.tools.scheduler import PORTFOLIO_CATEGORIES
+from src.tools.notify import hkt_str
 
 
 def _get_returns(tickers: list, period: str = "1y") -> "pd.DataFrame | None":
@@ -102,7 +103,7 @@ def get_risk_report(holdings: dict, prices: dict) -> str:
     total_str = f"${total_value:,.0f}" if total_value else "N/A"
     header = (
         f"🛡️ <b>Portfolio Risk Check</b>\n"
-        f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')} · {len(held)} positions · {total_str}</i>\n\n"
+        f"<i>{hkt_str('%d %b %Y, %H:%M')} · {len(held)} positions · {total_str}</i>\n\n"
     )
 
     return header + conc_msg + corr_msg + warn_msg

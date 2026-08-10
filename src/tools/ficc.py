@@ -9,6 +9,7 @@ import os
 import requests
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
+from src.tools.notify import hkt_str
 
 FRED_BASE = "https://api.stlouisfed.org/fred/series/observations"
 
@@ -115,7 +116,7 @@ def format_ficc_brief(data: dict) -> str:
         if val is not None:
             lines.append(f"• {label}: <b>{val:.4f}</b>")
 
-    lines.append(f"\n<i>Source: FRED · {datetime.now().strftime('%d %b %Y')}</i>")
+    lines.append(f"\n<i>Source: FRED · {hkt_str('%d %b %Y')}</i>")
     return "\n".join(lines)
 
 
@@ -201,7 +202,7 @@ def get_macro_regime() -> str:
     }.get(regime, "")
 
     msg = f"🌐 <b>Macro Regime: {regime_emoji} {regime}</b>\n"
-    msg += f"<i>{datetime.now().strftime('%d %b %Y')}</i>\n\n"
+    msg += f"<i>{hkt_str('%d %b %Y')}</i>\n\n"
     msg += f"<i>{regime_desc}</i>\n\n"
     msg += "<b>Signals:</b>\n"
     for s in signals:

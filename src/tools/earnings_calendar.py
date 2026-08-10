@@ -5,10 +5,40 @@ from concurrent.futures import ThreadPoolExecutor
 WATCHLIST = ["NVDA", "TSM", "AVGO", "AMD", "ASML", "ARM", "ALAB", "PLTR", "APP", "CEG"]
 
 
+_NO_EARNINGS = {"date": "Not available", "days_until": None, "alert": False}
+
+
+def _has_earnings(ticker: str) -> bool:
+    """
+    Only real equities have earnings dates. Crypto, indices, and placeholder
+    rows do not — looking them up is a guaranteed 404 every single cycle.
+
+    This ran unnormalized against the whole holdings list from both the
+    morning briefing and every market-open alert, so the live logs carried a
+    steady drip of 404s for ".VIX", "MATIC", "SOL" and the literal
+    placeholder string "— (SECTOR)". Two real costs beyond the noise: it
+    burns yfinance quota on calls that can never succeed (the same session
+    also shows 401 "Invalid Crumb" rate-limit errors), and a constant stream
+    of expected 404s is exactly what hides an unexpected one.
+    """
+    from src.tools.prices import normalize_ticker, CRYPTO_IDS
+    if not ticker or ticker in CRYPTO_IDS:
+        return False
+    norm = normalize_ticker(ticker)
+    # normalize_ticker returns "" for junk/placeholder rows and a "CRYPTO:"
+    # prefix for coins routed to CoinGecko.
+    if not norm or norm.startswith("CRYPTO:") or norm.startswith("^"):
+        return False
+    return True
+
+
 def _fetch_one(ticker):
     today = datetime.today().date()
+    if not _has_earnings(ticker):
+        return ticker, dict(_NO_EARNINGS)
     try:
-        info = yf.Ticker(ticker).info
+        from src.tools.prices import normalize_ticker
+        info = yf.Ticker(normalize_ticker(ticker)).info
         next_earnings = info.get("earningsTimestamp") or info.get("earningsTimestampStart")
         if next_earnings:
             earnings_date = datetime.fromtimestamp(next_earnings, tz=timezone.utc).date()

@@ -1,8 +1,27 @@
 import os
 import re
 import requests
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
+
+_HKT = timezone(timedelta(hours=8))
+
+
+def hkt_str(fmt: str = "%d %b %Y, %H:%M") -> str:
+    """
+    Format the current time in HKT for user-facing message text.
+
+    Railway runs UTC, so a bare datetime.now() in a message shows server
+    time labelled as if it were the reader's. That is not merely an
+    8-hour offset — it shifts the DATE. The morning briefing cron fires at
+    23:00 UTC Sunday, which is 07:00 HKT Monday, so its header rendered
+    "Morning Briefing — Sunday 09 August" on a Monday morning. Same class
+    as the HK Close header that showed 08:05 instead of 16:05 HKT.
+
+    Use for anything the user reads. Do NOT use for DB rows or log lines —
+    those should stay UTC/ISO so they sort and compare correctly.
+    """
+    return datetime.now(_HKT).strftime(fmt)
 
 load_dotenv()
 
@@ -133,7 +152,7 @@ def send_earnings_alert(ticker: str, days_until: int, date: str) -> bool:
 
 def send_morning_briefing(briefing: str) -> bool:
     """Send the daily morning briefing."""
-    header = f"🌅 <b>Morning Briefing — {datetime.now().strftime('%A %d %B %Y')}</b>\n\n"
+    header = f"🌅 <b>Morning Briefing — {hkt_str('%A %d %B %Y')}</b>\n\n"
     return send_telegram(header + briefing)
 
 if __name__ == "__main__":

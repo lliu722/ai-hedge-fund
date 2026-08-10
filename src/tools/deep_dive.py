@@ -5,6 +5,7 @@ from src.tools.prices import get_live_prices
 from src.tools.news_fetcher import get_news_for_tickers
 from src.tools.sec_filings import get_filing_summary
 from src.tools.llm import call_deepseek, fmt_snippet
+from src.tools.notify import hkt_str
 
 
 def deep_dive(ticker: str, name: str = "") -> str:
@@ -147,7 +148,7 @@ Under 900 words total. Be direct and opinionated."""
 
     output = (
         f"🔬 <b>Deep Dive: {ticker}</b>\n"
-        f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+        f"<i>{hkt_str('%d %b %Y, %H:%M')}</i>\n\n"
         f"{report}\n\n"
         f"<i>Sources: live price • {len(filings['10-K'])} 10-K • {len(filings['10-Q'])} 10-Q • {len(ticker_news)} news articles</i>"
     )

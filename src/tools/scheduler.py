@@ -4,18 +4,13 @@ import time
 from datetime import datetime, timedelta, timezone
 
 _HKT = timezone(timedelta(hours=8))
-
-
-def _now_hkt_str() -> str:
-    """Current time in HKT for user-facing message headers — Railway runs UTC,
-    so naive datetime.now() labelled 'HKT' was 8h off."""
-    return datetime.now(_HKT).strftime("%d %b %Y, %H:%M")
 from concurrent.futures import ThreadPoolExecutor
 from dotenv import load_dotenv
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
 
 load_dotenv()
 from src.tools.llm import call_deepseek, tavily_search, clean_news, fmt_snippet
+from src.tools.notify import hkt_str
 
 
 def load_watchlist():
@@ -438,7 +433,7 @@ Rules:
         # enough to hit it exactly.
         briefing = call_deepseek(prompt, max_tokens=900, temperature=0.3, timeout=60) or "Could not generate AI briefing."
 
-        header = f"🌅 <b>Morning Briefing — {datetime.now().strftime('%A %d %B %Y')}</b>\n\n"
+        header = f"🌅 <b>Morning Briefing — {hkt_str('%A %d %B %Y')}</b>\n\n"
 
         # Portfolio section — only positions moving ≥2% overnight, sorted by
         # biggest mover first (was: every held position, unconditionally —
@@ -835,7 +830,7 @@ Rules:
 
         digest = call_deepseek(prompt, max_tokens=1000, temperature=0.4, timeout=60) or "Could not generate weekly digest."
 
-        header = f"📊 <b>Weekly Digest — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
+        header = f"📊 <b>Weekly Digest — {hkt_str('%d %B %Y')}</b>\n\n"
         if theme_health:
             header += theme_health + "\n\n"
         from src.tools.recommendations import get_recommendations
@@ -980,7 +975,7 @@ def _check_recovery_alerts(prices: dict, held_data: dict):
         from src.tools.notify import send_telegram_with_buttons
         msg = (
             "🔔 <b>Price Stabilisation Alert</b>\n"
-            f"<i>{_now_hkt_str()} HKT</i>\n\n"
+            f"<i>{hkt_str()} HKT</i>\n\n"
             + "\n\n".join(msgs)
             + "\n\n<i>Tap a ticker for the full deep dive ↓</i>"
         )
@@ -1572,7 +1567,7 @@ def send_market_close_alert(market: str) -> bool:
 
         msg = (
             f"🔔 {cfg['flag']} <b>{market} Close — Portfolio Summary</b>\n"
-            f"<i>{_now_hkt_str()} HKT</i>\n"
+            f"<i>{hkt_str()} HKT</i>\n"
             f"<i>{total_winners} up · {total_losers} down</i>\n\n"
             + "\n".join(cat_blocks)
             + synthesis
@@ -1690,7 +1685,7 @@ Headlines to review:
         from src.tools.notify import send_telegram
         msg = (
             f"🚨 <b>Breaking News Alert</b>\n"
-            f"<i>{_now_hkt_str()} HKT</i>\n\n"
+            f"<i>{hkt_str()} HKT</i>\n\n"
             f"{filtered}"
         )
         send_telegram(msg)
@@ -1730,7 +1725,7 @@ def check_alerts_report() -> str:
         top = moves[:8]
 
         msg = f"🔍 <b>Alert Check — {len(tickers)} held positions</b>\n"
-        msg += f"<i>{_now_hkt_str()} HKT</i>\n\n"
+        msg += f"<i>{hkt_str()} HKT</i>\n\n"
 
         if alerts:
             msg += "🚨 <b>8%+ Moves:</b>\n"
@@ -1819,7 +1814,7 @@ def send_market_open_alert(market: str) -> bool:
             earnings_today = f_earn.result(timeout=15)
 
         # ── Build message ──────────────────────────────────────────────────────
-        now_str = _now_hkt_str()
+        now_str = hkt_str()
         msg = f"🔔 {cfg['flag']} <b>{market} Open</b> — {cfg['open_time']}\n<i>{now_str} HKT</i>\n\n"
 
         # Section 1 — Macro snapshot
@@ -1963,7 +1958,7 @@ def _maybe_send_monthly_review():
         avg_pnl = (sum(e.get("realised_pnl_pct") or 0 for e in closed) / len(closed)) if closed else 0
 
         msg = (
-            f"📅 <b>Monthly 复盘 — {datetime.now().strftime('%B %Y')}</b>\n"
+            f"📅 <b>Monthly 复盘 — {hkt_str('%B %Y')}</b>\n"
             f"<i>{len(closed)} closed · {wins} wins · avg {avg_pnl:+.1f}% · {len(open_)} still open</i>\n\n"
             + result
         )

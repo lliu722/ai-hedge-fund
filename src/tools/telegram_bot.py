@@ -22,6 +22,7 @@ from langchain_deepseek import ChatDeepSeek
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
 from src.tools.llm import call_deepseek, tavily_search, clean_news, filter_relevant
 from src.tools.research_library import save_research
+from src.tools.notify import hkt_str
 
 load_dotenv()
 
@@ -352,7 +353,7 @@ def get_portfolio() -> str:
     from src.tools.prices import pnl_pct as _pnl, get_live_prices
     prices = get_live_prices(list(PORTFOLIO.keys()))
     msg = f"💼 <b>Portfolio — {len(PORTFOLIO)} Held Positions</b>\n"
-    msg += f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+    msg += f"<i>{hkt_str('%d %b %Y, %H:%M')}</i>\n\n"
 
     rows = []
     total_value = 0.0
@@ -417,7 +418,7 @@ def get_watchlist() -> str:
     from src.tools.prices import get_live_prices
     prices = get_live_prices(list(WATCHLIST_ONLY.keys()))
     msg = f"👁 <b>Watchlist — {len(WATCHLIST_ONLY)} Monitoring</b>\n"
-    msg += f"<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n"
+    msg += f"<i>{hkt_str('%d %b %Y, %H:%M')}</i>\n\n"
     for t, d in prices.items():
         if not d:
             continue
@@ -436,7 +437,7 @@ def get_market_briefing() -> str:
     held_tickers = list(PORTFOLIO.keys())[:8]
     prices = get_live_prices(held_tickers)
     macro = get_macro_news()
-    msg = f"🌅 <b>Market Briefing — {datetime.now().strftime('%d %B %Y')}</b>\n\n"
+    msg = f"🌅 <b>Market Briefing — {hkt_str('%d %B %Y')}</b>\n\n"
     msg += "<b>Top Portfolio Moves:</b>\n"
     for t, d in prices.items():
         if not d:
@@ -1076,7 +1077,7 @@ def get_theme_health() -> str:
         scores[theme] = {"score": score, "avg_move": avg_move, "breadth": breadth, "n": len(tlist)}
     if not scores:
         return "Not enough positions per theme to score (need ≥2 per theme)."
-    msg = f"🧭 <b>Theme Health Scores</b>\n<i>{datetime.now().strftime('%d %b %Y')}</i>\n\n"
+    msg = f"🧭 <b>Theme Health Scores</b>\n<i>{hkt_str('%d %b %Y')}</i>\n\n"
     for theme, s in sorted(scores.items(), key=lambda x: x[1]["score"], reverse=True):
         bar   = "█" * int(s["score"] / 2) + "░" * (5 - int(s["score"] / 2))
         emoji = "🟢" if s["score"] >= 7 else ("🟡" if s["score"] >= 4 else "🔴")
@@ -1111,7 +1112,7 @@ def get_market_status() -> str:
     """Which markets are open RIGHT NOW, plus today's date/day and weekend/holiday status. ALWAYS call this before saying anything about a market being open, closed, or about to open/close — you cannot know the current day or time without it. Use for 'is the market open', 'has HK closed', 'what day is it'."""
     from src.tools.scheduler import (
         _open_markets, _is_weekend, _is_market_holiday,
-        MARKET_HOURS_UTC, _now_hkt_str,
+        MARKET_HOURS_UTC,
     )
     from datetime import datetime, timezone
 
@@ -1119,7 +1120,7 @@ def get_market_status() -> str:
     open_now = _open_markets()
     lines = [
         f"🕐 <b>Market status</b>",
-        f"Now: {_now_hkt_str()} HKT · {now.strftime('%A')} ({now.strftime('%Y-%m-%d')} UTC)",
+        f"Now: {hkt_str()} HKT · {now.strftime('%A')} ({now.strftime('%Y-%m-%d')} UTC)",
     ]
     if _is_weekend():
         lines.append("📅 <b>It is the weekend — all equity markets are CLOSED.</b>")
@@ -1190,7 +1191,7 @@ def get_sector_rotation() -> str:
         moves.sort(key=lambda x: -x[1])
 
         msg = f"🔄 <b>Sector Rotation — 5-Day Performance</b>\n"
-        msg += f"<i>{datetime.now().strftime('%d %b %Y')}</i>\n\n"
+        msg += f"<i>{hkt_str('%d %b %Y')}</i>\n\n"
 
         for label, chg, etf in moves:
             bar = "█" * min(int(abs(chg) * 2), 10)
@@ -1266,7 +1267,7 @@ def get_geopolitical_pulse() -> str:
     pulse = fetch_geopolitical_pulse()
     if not pulse:
         return "🌍 No significant geopolitical developments found right now."
-    return f"🌍 <b>Geopolitical Pulse</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n{pulse}"
+    return f"🌍 <b>Geopolitical Pulse</b>\n<i>{hkt_str('%d %b %Y, %H:%M')}</i>\n\n{pulse}"
 
 
 @tool
@@ -1477,7 +1478,7 @@ def get_monthly_review() -> str:
     if not result or result.startswith("❌"):
         return "❌ Could not generate review."
 
-    header = f"📅 <b>Monthly 复盘</b>\n<i>{datetime.now().strftime('%B %Y')}</i>\n"
+    header = f"📅 <b>Monthly 复盘</b>\n<i>{hkt_str('%B %Y')}</i>\n"
     stats = f"<i>{len(closed)} closed trades · {len(open_)} open positions</i>\n\n"
 
     if closed:
@@ -1928,7 +1929,7 @@ def handle_message(text: str, chat_id: str):
             from src.tools.scheduler import fetch_geopolitical_pulse
             send_message("⏳ Fetching geopolitical pulse...", chat_id, show_buttons=False)
             pulse = fetch_geopolitical_pulse()
-            msg = (f"🌍 <b>Geopolitical Pulse</b>\n<i>{datetime.now().strftime('%d %b %Y, %H:%M')}</i>\n\n{pulse}"
+            msg = (f"🌍 <b>Geopolitical Pulse</b>\n<i>{hkt_str('%d %b %Y, %H:%M')}</i>\n\n{pulse}"
                    if pulse else "🌍 No significant geopolitical developments found right now.")
             send_message(msg, chat_id)
             return
