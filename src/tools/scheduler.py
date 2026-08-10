@@ -1426,12 +1426,19 @@ _MARKET_CFG = {
     },
 }
 
-def _fetch_market_news(query: str, label: str) -> str:
+def _fetch_market_news(query: str, label: str, held: dict | None = None) -> str:
     """
     Market news block for the open alert: fetch real news articles (Tavily
     topic=news, last 2 days), then LLM-compress into trader-relevant bullets —
     raw search snippets are SEO noise and page chrome. Returns the formatted
     HTML block, or "" when nothing solid: an empty section beats gibberish.
+
+    `held` = {ticker: name} for this market's positions. Without it the output
+    was generic wire-copy ("China stocks rebound on AI and chip rally — may
+    drive HK tech names higher") that never said WHICH stocks moved, WHY, or
+    which of the user's actual positions it reads through to. Two causes, both
+    fixed here: the prompt had no idea what the user owns, and a 22-word-per-
+    line cap made naming names + cause + read-through physically impossible.
     """
     try:
         results = tavily_search(query, max_results=10, search_depth="basic",
@@ -1444,14 +1451,33 @@ def _fetch_market_news(query: str, label: str) -> str:
             f"- {a.get('title', '')} — {fmt_snippet(a.get('content', ''), 200)}"
             for a in articles[:8]
         )
+        held = held or {}
+        holdings_line = (
+            "The reader HOLDS these positions in this market:\n"
+            + "\n".join(f"- {t} ({n})" for t, n in list(held.items())[:25])
+            + "\n\n"
+        ) if held else ""
+
         bullets = call_deepseek(
+            f"{holdings_line}"
             "From these raw news search results, extract up to 4 distinct facts that "
-            "matter for a trader at today's market open. One line each, format: "
-            "'• [specific fact] — [market implication]', max 22 words per line. "
+            "matter for a trader at today's market open.\n\n"
+            "Each bullet MUST be specific and answer three things:\n"
+            "  1. WHAT specifically happened — name the actual companies/tickers or the "
+            "concrete data point. Never a vague aggregate like 'China stocks rebounded' "
+            "or 'tech rallied' without naming which ones.\n"
+            "  2. WHY it happened — the actual driver stated in the source.\n"
+            "  3. SO WHAT for this reader — which of THEIR held positions listed above it "
+            "reads through to, and in which direction. If it genuinely doesn't touch any "
+            "of their names, say 'no direct read-through to your book' rather than "
+            "inventing a connection.\n\n"
+            "Format: '• <b>[topic]</b>: [what + why] — [read-through to their positions]'\n"
+            "Up to 45 words per bullet. Prefer 2 specific bullets over 4 vague ones.\n"
+            "Only use facts present in the sources below — do not add context from memory. "
             "Ignore SEO pages, index/chart pages, ads, disclaimers, and anything stale. "
             "No preamble. If nothing genuinely newsworthy, reply exactly: NONE\n\n"
             f"{news_text}",
-            max_tokens=250, temperature=0.2,
+            max_tokens=500, temperature=0.2,
         )
         if not bullets or bullets.startswith("❌") or bullets.strip().upper() == "NONE":
             return ""
@@ -1810,7 +1836,15 @@ def send_market_open_alert(market: str):
 
         # Section 3 — Market news (from config query, junk filtered)
         today_str = datetime.now().strftime("%B %d %Y")
-        news_block = _fetch_market_news(cfg["news_query"].format(date=today_str), cfg["news_label"])
+        # Pass this market's held names so the news block can state the actual
+        # read-through to the book instead of generic wire commentary.
+        _held_here = {
+            t: WATCHLIST_DATA.get(t, {}).get("name", t)
+            for t in mkt_tickers
+        } if mkt_tickers else {}
+        news_block = _fetch_market_news(
+            cfg["news_query"].format(date=today_str), cfg["news_label"], _held_here
+        )
         if news_block:
             msg += news_block
 

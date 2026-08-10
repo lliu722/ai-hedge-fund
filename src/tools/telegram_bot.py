@@ -121,6 +121,8 @@ Never give a surface answer. Always pull the data first (use tools), then build 
 
 Always use tools for live data — never fabricate prices, numbers, or news. Call multiple tools when the question warrants it.
 
+READ INTENT BEFORE TICKERS: many ordinary English words are also real tickers (OK, ON, IT, ALL, SO, BE, KEY, CAT, NOW, GO, ARE, HAS). Judge what the user MEANT from the conversation, not from pattern-matching capital letters. "ok", "sure", "thanks", "no", "right" are acknowledgements — reply conversationally, never look them up as stocks. Only treat a word as a ticker when the user is clearly asking about a company. If genuinely ambiguous, ask — don't guess and return a stock quote for a word they used casually.
+
 DATA FIRST: Before answering any question about markets, a position, or a thesis — call the relevant tools first. For macro questions: get_macro_regime + get_sector_rotation. For a position: get_price + get_news. For portfolio questions: get_portfolio. Never answer from memory when live data is available.
 
 STRUCTURE: Break complex answers into named parts (PART 1: ..., PART 2: ...) so the user can follow the logic. Each part should add something — context, data, implication, action.
@@ -1790,9 +1792,29 @@ def handle_callback(callback_data: str, chat_id: str, callback_query_id: str):
 
 # ── Message Handler ───────────────────────────────────────────────────────────
 
+# Bare conversational replies. Several are also real tickers (OK = Oklahoma
+# gas utility, ON = onsemi, IT = Gartner, ALL = Allstate, SO = Southern Co,
+# BE/NOW/KEY/CAT...), so a bare "ok" could get picked up as a ticker lookup
+# and answered with a stock quote. Short-circuit them before the agent ever
+# sees them — no tool call, no ticker resolution, just an acknowledgement.
+_ACK_ONLY = {
+    "ok", "okay", "k", "kk", "ok thanks", "ok thx", "okie", "aight",
+    "sure", "yes", "yeah", "yep", "ya", "no", "nope", "nah",
+    "thanks", "thank you", "thx", "ty", "cheers", "great", "good", "nice",
+    "cool", "got it", "gotcha", "understood", "i see", "ic", "fine",
+    "lol", "haha", "hmm", "hm", "right", "true", "perfect", "awesome",
+    "done", "noted", "makes sense", "fair", "fair enough", "agreed",
+}
+
+
 def handle_message(text: str, chat_id: str):
     try:
         lowered = text.strip().lower()
+
+        # Strip trailing punctuation for the acknowledgement check only
+        if lowered.rstrip("!.?~ ") in _ACK_ONLY:
+            send_message("👍", chat_id)
+            return
 
         if lowered == "/start":
             send_message(
