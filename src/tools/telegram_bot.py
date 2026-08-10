@@ -342,10 +342,14 @@ def get_portfolio() -> str:
         value = shares * price
         cost_basis = shares * avg_cost
         dollar_pnl = value - cost_basis
-        pnl_pct = ((price - avg_cost) / avg_cost * 100) if avg_cost else 0
+        from src.tools.prices import pnl_pct as _pnl
+        pnl_pct = _pnl(price, avg_cost)
         total_value += value
         total_cost += cost_basis
-        if pnl_pct >= 0:
+        # Dollar P&L is still meaningful with a negative cost basis; the
+        # PERCENT is not (sign flips). Count winners/losers off dollars so a
+        # negative-basis winner isn't miscounted as a loser.
+        if dollar_pnl >= 0:
             winners += 1
         else:
             losers += 1
@@ -365,7 +369,7 @@ def get_portfolio() -> str:
         price_str = f"${price/1000:.1f}k" if price >= 1000 else f"${price:.0f}"
         left = f"{t:<5}{weight:.1f}%"
         today_str = f"{chg:+.1f}%"
-        pnl_str = f"{pnl_pct:+.1f}%"
+        pnl_str = f"{pnl_pct:+.1f}%" if pnl_pct is not None else "n/a"
         msg += f"{left:<10}{today_str:>7}  {pnl_str:>7}\n"
 
     msg += "</code>"

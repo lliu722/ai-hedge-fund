@@ -455,9 +455,9 @@ Rules:
             price = d.get("price")
             direction = "📈" if chg > 0 else "📉"
             line = f"{direction} <b>{fmt(t)}</b>: ${price} ({chg:+.2f}%)"
-            avg_cost = portfolio_data.get(t, {}).get("avg_cost")
-            if avg_cost and price:
-                pnl = (price - avg_cost) / avg_cost * 100
+            from src.tools.prices import pnl_pct as _pnl
+            pnl = _pnl(price, portfolio_data.get(t, {}).get("avg_cost"))
+            if pnl is not None:
                 line += f" · <i>{pnl:+.1f}%</i>"
             port_rows.append((abs(chg), line))
         port_rows.sort(key=lambda x: x[0], reverse=True)
@@ -1527,8 +1527,8 @@ def send_market_close_alert(market: str):
                 chg = d.get("change_pct") or 0
                 price = d.get("price")
                 shares = held.get(t, {}).get("shares", 0)
-                avg_cost = held.get(t, {}).get("avg_cost", 0)
-                pnl = ((price - avg_cost) / avg_cost * 100) if avg_cost and price else 0
+                from src.tools.prices import pnl_pct as _pnl
+                pnl = _pnl(price, held.get(t, {}).get("avg_cost"))
                 moves.append((t, chg, price, pnl))
                 if chg > 0:
                     total_winners += 1
@@ -1545,7 +1545,8 @@ def send_market_close_alert(market: str):
             block = f"{direction} <b>{cat}</b> ({avg_chg:+.1f}% avg)\n"
             for t, chg, price, pnl in moves:
                 icon = "▲" if chg > 0 else "▼"
-                block += f"  {icon} <b>{fmt(t)}</b>: {chg:+.2f}% • P&L: {pnl:+.1f}%\n"
+                pnl_str = f"{pnl:+.1f}%" if pnl is not None else "n/a"
+                block += f"  {icon} <b>{fmt(t)}</b>: {chg:+.2f}% • P&L: {pnl_str}\n"
             cat_blocks.append(block)
 
             summary_lines.append(f"{cat}: avg {avg_chg:+.1f}% ({', '.join(f'{t} {c:+.1f}%' for t, c, _, _ in moves[:3])})")
@@ -1873,10 +1874,13 @@ def send_market_open_alert(market: str):
                     return (abs(pct), line)
                 p     = prices.get(ticker, {})
                 price = p.get("price")
-                if price and avg_cost:
-                    pnl   = (price - avg_cost) / avg_cost * 100
+                from src.tools.prices import pnl_pct as _pnl
+                pnl = _pnl(price, avg_cost)
+                if pnl is not None:
                     emoji = "🟢" if pnl > 0 else "🔴"
                     return (0, f"  {emoji} <b>{ticker}</b> ${price:.2f} · cost P&L {pnl:+.1f}%")
+                if price and avg_cost is not None and avg_cost <= 0:
+                    return (0, f"  ⚪ <b>{ticker}</b> ${price:.2f} · <i>gain n/a (negative cost basis)</i>")
                 if price:
                     return (0, f"  ⚪ <b>{ticker}</b> ${price:.2f}")
                 return None

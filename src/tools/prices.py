@@ -224,6 +224,26 @@ def _fetch_batch_fast(tickers: list) -> dict:
     return results
 
 
+def pnl_pct(price, avg_cost):
+    """
+    Percent gain/loss vs cost basis, or None when not meaningfully computable.
+
+    Returns None — NOT 0, not a number — when avg_cost is missing, zero, or
+    NEGATIVE. A negative cost basis is real in this book: Zhipu (2513.HK)
+    carries avg_cost -1000.40 from an allocation-style entry. Dividing by a
+    negative base FLIPS THE SIGN, so a position up ~2.3x rendered as
+    "-229.4%" — the single biggest winner in the book displayed as a
+    catastrophic loss, in the morning briefing and every open/close alert.
+    Every call site had guarded with a truthy `if avg_cost`, which happily
+    passes for -1000.40.
+
+    Callers MUST render None as "n/a"/omit it, never coerce it to a number.
+    """
+    if not price or avg_cost is None or avg_cost <= 0:
+        return None
+    return (price - avg_cost) / avg_cost * 100
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def get_live_prices(tickers: list, detailed: bool = False) -> dict:
