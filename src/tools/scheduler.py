@@ -68,7 +68,85 @@ _custom_alerted: dict = {}
 
 # Tracks tickers that had a big drop and are being watched for stabilisation
 # {ticker: {"drop_pct": float, "price_at_drop": float, "recovery_alerted": bool}}
+_STATE_DB_DIR = "/app/data" if os.path.exists("/app/data") else "."
+_STATE_DB_PATH = os.path.join(_STATE_DB_DIR, "scheduler_state.db")
+
+
+def _state_conn():
+    import sqlite3
+    conn = sqlite3.connect(_STATE_DB_PATH, check_same_thread=False)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS drop_watch ("
+        "ticker TEXT PRIMARY KEY, drop_pct REAL, price_at_drop REAL, "
+        "recovery_alerted INTEGER, day TEXT)"
+    )
+    return conn
+
+
+def _load_drop_watch() -> dict:
+    """
+    Restore today's drop-watch from disk.
+
+    _drop_watch tracks names that fell 8%+ so a later "it has stabilised,
+    this may be an add point" alert can fire. It was a bare in-process dict,
+    so every restart silently dropped the entire watch and those follow-up
+    alerts simply never came — and nothing logged that they were lost. On a
+    day with several deploys (this repo deploys on every push) the feature
+    was effectively off. Rows are stamped with the day and stale ones are
+    ignored on load, preserving the existing daily-reset behaviour.
+    """
+    today = datetime.now(_HKT).strftime("%Y-%m-%d")
+    try:
+        conn = _state_conn()
+        rows = conn.execute(
+            "SELECT ticker, drop_pct, price_at_drop, recovery_alerted FROM drop_watch WHERE day = ?",
+            (today,),
+        ).fetchall()
+        conn.close()
+        return {
+            t: {"drop_pct": d, "price_at_drop": p, "recovery_alerted": bool(r)}
+            for t, d, p, r in rows
+        }
+    except Exception as e:
+        print(f"[scheduler] drop_watch load failed: {e}")
+        return {}
+
+
+def _persist_drop_watch(ticker: str) -> None:
+    """Write one ticker's watch row through to disk."""
+    w = _drop_watch.get(ticker)
+    if not w:
+        return
+    try:
+        conn = _state_conn()
+        with conn:
+            conn.execute(
+                "INSERT INTO drop_watch (ticker, drop_pct, price_at_drop, recovery_alerted, day) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(ticker) DO UPDATE SET "
+                "drop_pct=excluded.drop_pct, price_at_drop=excluded.price_at_drop, "
+                "recovery_alerted=excluded.recovery_alerted, day=excluded.day",
+                (ticker, w.get("drop_pct"), w.get("price_at_drop"),
+                 int(bool(w.get("recovery_alerted"))), datetime.now(_HKT).strftime("%Y-%m-%d")),
+            )
+        conn.close()
+    except Exception as e:
+        print(f"[scheduler] drop_watch persist failed for {ticker}: {e}")
+
+
+def _clear_drop_watch() -> None:
+    """Clear both the in-memory watch and its on-disk copy."""
+    _drop_watch.clear()
+    try:
+        conn = _state_conn()
+        with conn:
+            conn.execute("DELETE FROM drop_watch")
+        conn.close()
+    except Exception as e:
+        print(f"[scheduler] drop_watch clear failed: {e}")
+
+
 _drop_watch: dict = {}
+_drop_watch.update(_load_drop_watch())  # survive restarts (see _load_drop_watch)
 
 # Tracks seen news headlines to avoid duplicate pushes — keyed by title[:80]
 _seen_headlines: set = set()
@@ -491,7 +569,7 @@ Rules:
             print(f"Proactive analyst error: {e}")
 
         _alerted_today.clear()
-        _drop_watch.clear()
+        _clear_drop_watch()
         from src.tools.alert_config import clear_alerted_today
         clear_alerted_today(datetime.now().strftime("%Y-%m-%d"))
         print(f"[{datetime.now().strftime('%H:%M')}] Daily alert cache cleared.")
@@ -969,6 +1047,7 @@ def _check_recovery_alerts(prices: dict, held_data: dict):
                 f"   {verdict}"
             )
             _drop_watch[ticker]["recovery_alerted"] = True
+            _persist_drop_watch(ticker)
             stabilised_tickers.append(ticker)
 
     if msgs:
@@ -1070,6 +1149,7 @@ def check_price_alerts():
                         "price_at_drop": data.get("price") or 0,
                         "recovery_alerted": False,
                     }
+                    _persist_drop_watch(ticker)
 
         # ── Custom threshold alerts ───────────────────────────────────────────
         try:

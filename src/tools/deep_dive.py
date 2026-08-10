@@ -16,14 +16,18 @@ def deep_dive(ticker: str, name: str = "") -> str:
         try:
             from src.tools.research_library import search_research
             return search_research(ticker=ticker, limit=5)
-        except Exception:
+        except Exception as e:
+            # Silent [] means the deep dive quietly omits your own saved
+            # research and reads as if none existed.
+            print(f"[deep_dive:fetch_notes] {ticker}: {type(e).__name__}: {e}")
             return []
 
     def fetch_earnings_history():
         try:
             from src.tools.research_library import get_earnings_history
             return get_earnings_history(ticker)
-        except Exception:
+        except Exception as e:
+            print(f"[deep_dive:fetch_earnings_history] {ticker}: {type(e).__name__}: {e}")
             return []
 
     # Steps 1-5 in parallel

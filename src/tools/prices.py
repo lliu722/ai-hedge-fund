@@ -141,7 +141,12 @@ def _fetch_one_detailed(ticker: str) -> dict:
             "pe_ratio": info.get("trailingPE"),
             "volume": info.get("regularMarketVolume"),
         }
-    except Exception:
+    except Exception as e:
+        # Never fail silently on a PRICE fetch. An empty dict here is
+        # indistinguishable from "no data" to every caller, which is exactly
+        # how get_live_prices returned {} for every ticker for an unknown
+        # period before it was caught by eye rather than by logs.
+        print(f"[prices:_fetch_one_detailed] {ticker}: {type(e).__name__}: {e}")
         return {}
 
 

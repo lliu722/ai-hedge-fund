@@ -208,7 +208,11 @@ def _find_page_id(ticker: str) -> str | None:
         )
         results = r.json().get("results", [])
         return results[0]["id"] if results else None
-    except Exception:
+    except Exception as e:
+        # A silent None here is read by callers as "no such row", which can
+        # mean a position update is skipped or a duplicate row is created
+        # instead of updating the existing one. Never swallow this quietly.
+        print(f"[notion_holdings:_find_page_id] {ticker}: {type(e).__name__}: {e}")
         return None
 
 
@@ -468,7 +472,10 @@ def get_journal_entries(status: str = None, limit: int = 15) -> list:
             json=payload,
         )
         return r.json().get("results", [])
-    except Exception:
+    except Exception as e:
+        # Empty journal reads silently render as "no realised trades this
+        # week" in the digest — a wrong statement, not a missing one.
+        print(f"[notion_holdings:get_journal_entries] {type(e).__name__}: {e}")
         return []
 
 

@@ -18,7 +18,11 @@ def _get_returns(tickers: list, period: str = "1y") -> "pd.DataFrame | None":
         closes = data["Close"] if len(tickers) > 1 else data[["Close"]].rename(columns={"Close": tickers[0]})
         closes = closes.dropna(axis=1, how="all")
         return closes.pct_change().dropna()
-    except Exception:
+    except Exception as e:
+        # Returning None silently drops the whole correlation-cluster
+        # section from the risk report — the reader sees a risk report that
+        # looks complete but isn't.
+        print(f"[risk:_get_returns] {type(e).__name__}: {e}")
         return None
 
 
