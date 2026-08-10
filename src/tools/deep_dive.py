@@ -80,7 +80,11 @@ def deep_dive(ticker: str, name: str = "") -> str:
             if snip:
                 news_context += f"  {snip}\n"
     else:
-        news_context += "No recent news found — use training knowledge.\n"
+        news_context += (
+            "NO recent news found for this ticker. Do NOT substitute training knowledge "
+            "for current events — say plainly that no recent coverage was available and "
+            "keep CURRENT SITUATION limited to what the price/filings data above supports.\n"
+        )
 
     notes_context = ""
     if saved_notes:
@@ -105,7 +109,13 @@ def deep_dive(ticker: str, name: str = "") -> str:
         "Your reader is a sophisticated investor with a 1-12 month catalyst-driven horizon. "
         "Be direct, specific, and opinionated. No generic statements. "
         "Format for Telegram: use <b>bold</b> for section headers and key terms. "
-        "Use • for bullets. No markdown tables, no --- dividers, no # headers."
+        "Use • for bullets. No markdown tables, no --- dividers, no # headers.\n"
+        "GROUNDING RULE: every factual claim about CURRENT events (recent news, latest "
+        "results, guidance, what just happened) must come from the data provided below. "
+        "Your training data has a cutoff and is stale for anything recent — if the "
+        "provided context doesn't support a current-events claim, say so explicitly "
+        "rather than filling the gap from memory. Timeless business description "
+        "(what the company does, who it competes with) may use your own knowledge."
     )
 
     user_prompt = f"""Deep dive research report for <b>{ticker}</b>.

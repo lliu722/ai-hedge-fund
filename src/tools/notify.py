@@ -6,6 +6,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Client-side socket timeout on every Telegram send. Without it, a stalled or
+# half-open connection blocks the calling thread forever. These sends run on
+# the SCHEDULER thread (alerts, briefings, close summaries) — one hung send
+# wedges the scheduler and every future alert stops silently, with nothing
+# logged. Same failure class as the getUpdates() hang fixed 2026-08-10, on the
+# send path instead of the receive path.
+_SEND_TIMEOUT = 20
+
 
 def clean_for_telegram(text: str) -> str:
     """
@@ -52,7 +60,11 @@ def send_telegram(message: str) -> bool:
     ok = True
     for chunk in chunks:
         try:
-            response = requests.post(url, json={"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"})
+            response = requests.post(
+                url,
+                json={"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"},
+                timeout=_SEND_TIMEOUT,
+            )
             if response.status_code != 200:
                 print(f"Telegram error: {response.text}")
                 ok = False
@@ -78,7 +90,11 @@ def send_telegram_with_buttons(message: str, buttons: list[list[dict]]) -> bool:
             "parse_mode": "HTML",
             "reply_markup": json.dumps({"inline_keyboard": buttons}),
         }
-        r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload)
+        r = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json=payload,
+            timeout=_SEND_TIMEOUT,
+        )
         return r.status_code == 200
     except Exception as e:
         print(f"Telegram button message error: {e}")

@@ -6,7 +6,7 @@ BASE_URL = "https://data.sec.gov"
 
 def get_cik(ticker):
     url = "https://www.sec.gov/files/company_tickers.json"
-    response = requests.get(url, headers=HEADERS)
+    response = requests.get(url, headers=HEADERS, timeout=15)
     data = response.json()
     for entry in data.values():
         if entry["ticker"].upper() == ticker.upper():
@@ -20,7 +20,7 @@ def get_recent_filings(ticker, form_type="10-K", count=3):
         return []
 
     url = f"{BASE_URL}/submissions/CIK{cik}.json"
-    response = requests.get(url, headers=HEADERS)
+    response = requests.get(url, headers=HEADERS, timeout=15)
 
     if response.status_code != 200:
         print(f"Error fetching filings for {ticker}: {response.status_code}")

@@ -6,11 +6,21 @@ Loaded once at module level and cached — shared across all importers.
 """
 
 import os
+import functools
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Every Notion call needs a client-side timeout. reload_holdings() runs on the
+# SCHEDULER thread every 30 minutes (auto_reload_holdings) — an untimed request
+# that stalls wedges the scheduler permanently, silently killing all future
+# alerts and briefings with nothing logged. Bound through partials so a call
+# site can't forget; same failure class as the Telegram getUpdates/send hangs.
+_HTTP_TIMEOUT = 20
+_post = functools.partial(requests.post, timeout=_HTTP_TIMEOUT)
+_patch = functools.partial(requests.patch, timeout=_HTTP_TIMEOUT)
 
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 HOLDINGS_DATABASE_ID = "9dd63515-c7ae-4f2c-bbc9-a73c6c65bbd1"
@@ -53,7 +63,7 @@ def get_holdings_from_notion() -> dict:
             payload = {"page_size": 100}
             if cursor:
                 payload["start_cursor"] = cursor
-            response = requests.post(url, headers=headers, json=payload)
+            response = _post(url, headers=headers, json=payload)
             if response.status_code != 200:
                 print(f"Notion API error {response.status_code} — using fallback.")
                 return FALLBACK_WATCHLIST
@@ -191,7 +201,7 @@ def _notion_headers() -> dict:
 def _find_page_id(ticker: str) -> str | None:
     """Find the Notion page ID for a given ticker."""
     try:
-        r = requests.post(
+        r = _post(
             f"https://api.notion.com/v1/databases/{HOLDINGS_DATABASE_ID}/query",
             headers=_notion_headers(),
             json={"filter": {"property": "Ticker", "rich_text": {"equals": ticker.upper()}}},
@@ -208,7 +218,7 @@ def add_to_watchlist(ticker: str, name: str = "") -> str:
     if not NOTION_API_KEY:
         return "❌ NOTION_API_KEY not set."
     try:
-        r = requests.post(
+        r = _post(
             "https://api.notion.com/v1/pages",
             headers=_notion_headers(),
             json={
@@ -237,7 +247,7 @@ def update_position(ticker: str, shares: float, avg_cost: float) -> str:
         page_id = _find_page_id(ticker)
         props = {"Shares": {"number": shares}, "Avg Cost": {"number": avg_cost}}
         if page_id:
-            r = requests.patch(
+            r = _patch(
                 f"https://api.notion.com/v1/pages/{page_id}",
                 headers=_notion_headers(),
                 json={"properties": props},
@@ -246,7 +256,7 @@ def update_position(ticker: str, shares: float, avg_cost: float) -> str:
             # New ticker — create row
             props["Name"]   = {"title":     [{"text": {"content": ticker}}]}
             props["Ticker"] = {"rich_text": [{"text": {"content": ticker}}]}
-            r = requests.post(
+            r = _post(
                 "https://api.notion.com/v1/pages",
                 headers=_notion_headers(),
                 json={"parent": {"database_id": HOLDINGS_DATABASE_ID}, "properties": props},
@@ -280,7 +290,7 @@ def update_rating(ticker: str, rating: str) -> str:
         page_id = _find_page_id(ticker)
         if not page_id:
             return f"❌ {ticker} not found in Notion."
-        r = requests.patch(
+        r = _patch(
             f"https://api.notion.com/v1/pages/{page_id}",
             headers=_notion_headers(),
             json={"properties": {"Rating": {"select": {"name": normalised}}}},
@@ -304,7 +314,7 @@ def update_thesis(ticker: str, thesis: str) -> str:
         page_id = _find_page_id(ticker)
         if not page_id:
             return f"❌ {ticker} not found in Notion."
-        r = requests.patch(
+        r = _patch(
             f"https://api.notion.com/v1/pages/{page_id}",
             headers=_notion_headers(),
             json={"properties": {"Thesis (Durable)": {"rich_text": [{"text": {"content": thesis.strip()[:2000]}}]}}},
@@ -326,7 +336,7 @@ def sell_position(ticker: str) -> str:
         page_id = _find_page_id(ticker)
         if not page_id:
             return f"❌ {ticker} not found in Notion."
-        r = requests.patch(
+        r = _patch(
             f"https://api.notion.com/v1/pages/{page_id}",
             headers=_notion_headers(),
             json={"properties": {"Shares": {"number": 0}}},
@@ -364,7 +374,7 @@ def log_trade_entry(ticker: str, action: str, shares: float, entry_price: float,
         rationale = thesis[:300] if thesis else f"{action} {ticker}"
 
     try:
-        r = requests.post(
+        r = _post(
             "https://api.notion.com/v1/pages",
             headers=_notion_headers(),
             json={
@@ -394,7 +404,7 @@ def close_trade_entry(ticker: str, exit_price: float, exit_note: str = "") -> st
     ticker = ticker.upper()
     date_str = datetime.now().strftime("%Y-%m-%d")
     try:
-        r = requests.post(
+        r = _post(
             f"https://api.notion.com/v1/databases/{JOURNAL_DATABASE_ID}/query",
             headers=_notion_headers(),
             json={
@@ -430,7 +440,7 @@ def close_trade_entry(ticker: str, exit_price: float, exit_note: str = "") -> st
             new_text = (existing_text + "\n\nEXIT: " + exit_note).strip()[:2000]
             update_props["Rationale"] = {"rich_text": [{"text": {"content": new_text}}]}
 
-        rr = requests.patch(
+        rr = _patch(
             f"https://api.notion.com/v1/pages/{page_id}",
             headers=_notion_headers(),
             json={"properties": update_props},
@@ -452,7 +462,7 @@ def get_journal_entries(status: str = None, limit: int = 15) -> list:
         }
         if status:
             payload["filter"] = {"property": "Status", "select": {"equals": status}}
-        r = requests.post(
+        r = _post(
             f"https://api.notion.com/v1/databases/{JOURNAL_DATABASE_ID}/query",
             headers=_notion_headers(),
             json=payload,

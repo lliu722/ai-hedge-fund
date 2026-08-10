@@ -163,13 +163,14 @@ def send_message(text: str, chat_id: str = None, show_buttons: bool = True):
         }
         if show_buttons and i == len(chunks) - 1:
             payload["reply_markup"] = json.dumps(build_keyboard(chat_id or TELEGRAM_CHAT_ID))
-        requests.post(url, json=payload)
+        requests.post(url, json=payload, timeout=_SEND_TIMEOUT)
 
 
 def answer_callback(callback_query_id: str):
     requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery",
-        json={"callback_query_id": callback_query_id}
+        json={"callback_query_id": callback_query_id},
+        timeout=_SEND_TIMEOUT,
     )
 
 
@@ -278,7 +279,15 @@ def get_news(ticker: str = None) -> str:
                     msg += f"  <i>{a['content'][:150].strip()}...</i>\n\n"
             return msg
         else:
-            return f"No recent search results for {fmt(t)}. Provide a brief summary from your training knowledge about recent {fmt(t)} developments instead."
+            # Never instruct the agent to fill the gap from training knowledge —
+            # this string is returned INTO the agent loop as a tool result, so
+            # the model obeys it and fabricates "recent developments" that are
+            # really stale pre-cutoff memory presented as current news.
+            return (
+                f"No recent news coverage found for {fmt(t)}. Report this plainly to the user — "
+                f"do NOT substitute training knowledge for current news, it is stale and would be "
+                f"presented as if current."
+            )
     else:
         articles = get_macro_news()
         msg = "🌍 <b>Market & Macro News</b>\n\n"
