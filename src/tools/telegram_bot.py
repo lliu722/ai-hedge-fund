@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import time
 import requests
 import threading
 from datetime import datetime
@@ -172,13 +173,34 @@ def answer_callback(callback_query_id: str):
     )
 
 
+_POLL_TIMEOUT = 30      # Telegram-side long-poll hold (query param)
+_SOCKET_TIMEOUT = 45    # client-side socket timeout — MUST exceed _POLL_TIMEOUT
+
+
 def get_updates(offset: int = 0) -> list:
+    """
+    Long-poll Telegram for updates.
+
+    The "timeout" inside params is Telegram's SERVER-side long-poll hold, not
+    a client-side socket timeout — passing only that leaves requests with no
+    timeout at all, so a stalled/half-open connection blocks forever and the
+    whole message loop wedges silently. The scheduler runs on its own thread,
+    so cron alerts keep going out and the bot looks alive while ignoring every
+    incoming message, with nothing logged and no exception raised. Caught live
+    2026-08-10: HK open alert delivered 09:20 HKT, a 09:55 message was never
+    received or logged. The explicit socket timeout below turns that silent
+    hang into a normal exception the loop can recover from.
+    """
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-    r = requests.get(url, params={
-        "offset": offset,
-        "timeout": 30,
-        "allowed_updates": ["message", "callback_query"]
-    })
+    r = requests.get(
+        url,
+        params={
+            "offset": offset,
+            "timeout": _POLL_TIMEOUT,
+            "allowed_updates": ["message", "callback_query"],
+        },
+        timeout=_SOCKET_TIMEOUT,
+    )
     return r.json().get("result", []) if r.status_code == 200 else []
 
 
@@ -2193,7 +2215,12 @@ def run_bot():
             print("\nBot stopped.")
             break
         except Exception as e:
+            # get_updates() now raises on a stalled connection instead of
+            # blocking forever (see its docstring). Brief backoff so a
+            # fast-failing error (DNS/refused, which returns instantly rather
+            # than consuming the long-poll window) can't spin this loop hot.
             print(f"Loop error: {e}")
+            time.sleep(3)
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
