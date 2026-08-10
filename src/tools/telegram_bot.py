@@ -52,8 +52,12 @@ WATCHLIST_ONLY = {t: d for t, d in WATCHLIST.items() if (d.get("shares") or 0) =
 
 def fmt(ticker: str) -> str:
     t = ticker.upper()
-    name = WATCHLIST.get(t, {}).get("name", "")
-    return f"{t} ({name})" if name else t
+    name = (WATCHLIST.get(t, {}).get("name") or "").strip()
+    # Mirrors scheduler.fmt — some Notion rows carry the ticker as the name,
+    # which rendered as "USAR (USAR)".
+    if not name or name.upper() == t:
+        return t
+    return f"{t} ({name})"
 
 
 def build_keyboard(chat_id: str = None) -> dict:

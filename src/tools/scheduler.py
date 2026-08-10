@@ -260,8 +260,12 @@ def _ticker_market(ticker: str) -> str | None:
 # mirrors fmt() in telegram_bot.py — intentional, each uses its own loaded WATCHLIST_DATA
 def fmt(ticker: str) -> str:
     t = ticker.upper()
-    name = WATCHLIST_DATA.get(t, {}).get("name", "")
-    return f"{t} ({name})" if name else t
+    name = (WATCHLIST_DATA.get(t, {}).get("name") or "").strip()
+    # Some Notion rows carry the ticker itself as the name, which rendered
+    # as "USAR (USAR)" in every message that named the position.
+    if not name or name.upper() == t:
+        return t
+    return f"{t} ({name})"
 
 
 # ── Geopolitical Pulse ───────────────────────────────────────────────────────
@@ -1894,19 +1898,36 @@ def send_market_open_alert(market: str) -> bool:
             earnings_today = f_earn.result(timeout=15)
 
         # ── Build message ──────────────────────────────────────────────────────
-        now_str = hkt_str()
-        msg = f"🔔 {cfg['flag']} <b>{market} Open</b> — {cfg['open_time']}\n<i>{now_str} HKT</i>\n\n"
+        # Header: ONE clock, plus what happens next. Previously carried two
+        # different times ("HK Open — 9:30am HKT" over "09:20 HKT"), which
+        # reads as a contradiction — is it 9:20 or 9:30?
+        msg = (
+            f"{cfg['flag']} <b>{market} Open</b>\n"
+            f"<i>{hkt_str('%a %d %b')} · now {hkt_str('%H:%M')} HKT · "
+            f"opens {cfg['open_time']}</i>\n\n"
+        )
 
-        # Section 1 — Macro snapshot
-        macro_lines = []
+        # Section 1 — Macro snapshot. Sub-0.05% moves are noise: rendering
+        # them as "▼ Nasdaq Fut: -0.0%" puts a direction arrow on a flat
+        # number, which is worse than saying nothing. Demote to a flat list
+        # rather than dropping them, so absence still means "not fetched".
+        macro_lines, flat_labels = [], []
         for sym, label in cfg["open_macro"].items():
             p   = macro_prices.get(sym, {})
             chg = p.get("change_pct")
-            if chg is not None:
+            if chg is None:
+                continue
+            if abs(chg) < 0.05:
+                flat_labels.append(label)
+            else:
                 arrow = "▲" if chg > 0 else "▼"
                 macro_lines.append(f"  {arrow} {label}: {chg:+.1f}%")
-        if macro_lines:
-            msg += f"<b>🌐 Macro</b>\n" + "\n".join(macro_lines) + "\n"
+        if macro_lines or flat_labels:
+            msg += "<b>🌐 Macro</b>\n"
+            if macro_lines:
+                msg += "\n".join(macro_lines) + "\n"
+            if flat_labels:
+                msg += f"  <i>flat: {', '.join(flat_labels)}</i>\n"
 
         # Section 2 — Earnings today
         msg += f"\n<b>📅 Reporting Today</b>\n"
@@ -1936,18 +1957,27 @@ def send_market_open_alert(market: str) -> bool:
             if pre_available:
                 msg += f"\n<b>📊 Pre-Market Movers</b> <i>(vs prev close)</i>\n"
             else:
-                msg += f"\n<b>📊 Your {market} Positions</b> <i>(last close)</i>\n"
+                # Name WHICH close. "(last close)" on a Monday is ambiguous —
+                # the data is Friday's, not "yesterday's".
+                _wd = datetime.now(_HKT).weekday()
+                _back = 3 if _wd == 0 else (2 if _wd == 6 else 1)
+                _close_day = (datetime.now(_HKT) - timedelta(days=_back)).strftime("%a")
+                msg += f"\n<b>📊 Your {market} Positions</b> <i>({_close_day} close)</i>\n"
 
             def _pos_line(ticker: str):
                 """Returns (sort_key, line) or None if no price available."""
                 d        = held.get(ticker, {})
                 avg_cost = d.get("avg_cost", 0)
+                # Company name inline — a bare "2513.HK" requires the reader to
+                # remember which position that is.
+                _nm   = (d.get("name") or "").strip()
+                label = f"<b>{ticker}</b>" + (f" {_nm}" if _nm and _nm.upper() != ticker.upper() else "")
                 if ticker in pre_moves:
                     pm    = pre_moves[ticker]
                     pct   = pm["pre_pct"]
                     arrow = "▲" if pct > 0 else "▼"
                     emoji = "🟢" if pct > 0 else "🔴"
-                    line  = f"  {emoji} <b>{ticker}</b> {arrow}{abs(pct):.1f}% pre-mkt (${pm['pre_price']:.2f})"
+                    line  = f"  {emoji} {label} {arrow}{abs(pct):.1f}% pre-mkt (${pm['pre_price']:.2f})"
                     if abs(pct) >= 3.0:
                         sh5  = int(5000  / pm["pre_price"])
                         sh10 = int(10000 / pm["pre_price"])
@@ -1958,11 +1988,11 @@ def send_market_open_alert(market: str) -> bool:
                 pnl = _pnl(price, avg_cost)
                 if pnl is not None:
                     emoji = "🟢" if pnl > 0 else "🔴"
-                    return (0, f"  {emoji} <b>{ticker}</b> ${price:.2f} · cost P&L {pnl:+.1f}%")
+                    return (0, f"  {emoji} {label} ${price:.2f} · cost P&L {pnl:+.1f}%")
                 if price and avg_cost is not None and avg_cost <= 0:
-                    return (0, f"  ⚪ <b>{ticker}</b> ${price:.2f} · <i>gain n/a (negative cost basis)</i>")
+                    return (0, f"  ⚪ {label} ${price:.2f} · <i>gain n/a (negative cost basis)</i>")
                 if price:
-                    return (0, f"  ⚪ <b>{ticker}</b> ${price:.2f}")
+                    return (0, f"  ⚪ {label} ${price:.2f}")
                 return None
 
             cat_blocks = []
