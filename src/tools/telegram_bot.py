@@ -215,7 +215,10 @@ def answer_callback(callback_query_id: str):
 
 
 _POLL_TIMEOUT = 30      # Telegram-side long-poll hold (query param)
-_SOCKET_TIMEOUT = 45    # client-side socket timeout — MUST exceed _POLL_TIMEOUT
+# (connect, read) rather than one scalar. A scalar applied 45s to BOTH, so a
+# dead host took 45s to fail instead of failing fast on connect. Read must
+# exceed _POLL_TIMEOUT or every empty long-poll would abort as a "timeout".
+_SOCKET_TIMEOUT = (10, _POLL_TIMEOUT + 5)
 
 
 def get_updates(offset: int = 0) -> list:
@@ -2283,6 +2286,11 @@ def handle_message(text: str, chat_id: str):
 
 # ── Bot Loop ──────────────────────────────────────────────────────────────────
 
+# Mutable holder so the poll loop can count transient network errors without
+# a global statement. Index 0 = count since process start.
+_transient_errors = [0]
+
+
 def run_bot():
     print("🤖 AI Investor Bot (LangGraph) is running...")
     send_message(
@@ -2328,7 +2336,31 @@ def run_bot():
             # blocking forever (see its docstring). Brief backoff so a
             # fast-failing error (DNS/refused, which returns instantly rather
             # than consuming the long-poll window) can't spin this loop hot.
-            print(f"Loop error: {e}")
+            #
+            # Transient network conditions are EXPECTED here and are fully
+            # recovered from — Telegram's offset means no update is lost. They
+            # were logged as "Loop error: ..." identically to real bugs, so a
+            # Telegram-side outage (79 of these during a 502 Bad Gateway spell
+            # on 2026-08-10) read like the bot was crash-looping when uptime
+            # was in fact unbroken. Label them for what they are, and keep
+            # "Loop error" meaning something is actually wrong.
+            import requests as _rq
+            transient = (
+                _rq.exceptions.Timeout,
+                _rq.exceptions.ConnectionError,
+                _rq.exceptions.ChunkedEncodingError,
+            )
+            if isinstance(e, transient):
+                _transient_errors[0] += 1
+                # Only log the first of a burst, then every 20th, so an
+                # outage leaves a trace without flooding the log.
+                if _transient_errors[0] == 1 or _transient_errors[0] % 20 == 0:
+                    print(
+                        f"[poll] transient network issue (recovered, "
+                        f"{_transient_errors[0]} so far): {type(e).__name__}"
+                    )
+            else:
+                print(f"Loop error: {type(e).__name__}: {e}")
             time.sleep(3)
 
 
