@@ -50,6 +50,20 @@ PORTFOLIO = {t: d for t, d in WATCHLIST.items() if (d.get("shares") or 0) > 0}
 WATCHLIST_ONLY = {t: d for t, d in WATCHLIST.items() if (d.get("shares") or 0) == 0}
 
 
+def refresh_holdings(new_data: dict) -> None:
+    """Update the running bot's holdings and watchlist in place."""
+    new_data = new_data.copy()
+    WATCHLIST.clear()
+    WATCHLIST.update(new_data)
+    WATCHLIST_TICKERS[:] = list(new_data)
+    WATCHLIST_TICKERS_SET.clear()
+    WATCHLIST_TICKERS_SET.update(new_data)
+    PORTFOLIO.clear()
+    PORTFOLIO.update({t: d for t, d in new_data.items() if (d.get("shares") or 0) > 0})
+    WATCHLIST_ONLY.clear()
+    WATCHLIST_ONLY.update({t: d for t, d in new_data.items() if (d.get("shares") or 0) == 0})
+
+
 def fmt(ticker: str) -> str:
     t = ticker.upper()
     name = (WATCHLIST.get(t, {}).get("name") or "").strip()
@@ -2102,12 +2116,7 @@ def handle_message(text: str, chat_id: str):
         if _reload_match:
             from src.tools.notion_holdings import reload_holdings
             new_data = reload_holdings()
-            # Update all module-level dicts in-place so agent sees fresh data immediately
-            WATCHLIST.clear(); WATCHLIST.update(new_data)
-            WATCHLIST_TICKERS[:] = list(new_data.keys())
-            WATCHLIST_TICKERS_SET.clear(); WATCHLIST_TICKERS_SET.update(WATCHLIST_TICKERS)
-            PORTFOLIO.clear(); PORTFOLIO.update({t: d for t, d in new_data.items() if (d.get("shares") or 0) > 0})
-            WATCHLIST_ONLY.clear(); WATCHLIST_ONLY.update({t: d for t, d in new_data.items() if (d.get("shares") or 0) == 0})
+            refresh_holdings(new_data)
             send_message(
                 f"✅ Holdings reloaded from Notion.\n"
                 f"<b>{len(PORTFOLIO)}</b> held positions · <b>{len(WATCHLIST_ONLY)}</b> watchlist",
@@ -2369,7 +2378,7 @@ def run_bot():
 if __name__ == "__main__":
     try:
         from src.tools.scheduler import run_scheduler
-        scheduler_thread = threading.Thread(target=run_scheduler, daemon=True)
+        scheduler_thread = threading.Thread(target=run_scheduler, args=(refresh_holdings,), daemon=True)
         scheduler_thread.start()
         print("📅 Scheduler thread started.")
     except Exception as e:

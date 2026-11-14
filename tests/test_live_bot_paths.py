@@ -133,3 +133,54 @@ def test_acknowledgements_are_not_treated_as_tickers():
         assert ack.strip().lower().rstrip("!.?~ ") in _ACK_ONLY
     for real in ("ON", "deep dive ON", "add CIFR", "price of IT"):
         assert real.strip().lower().rstrip("!.?~ ") not in _ACK_ONLY
+
+
+def test_worker_maintenance_prunes_only_finished_download_threads(monkeypatch):
+    from threading import Event, Thread
+
+    import multitasking
+    from src.tools import scheduler
+
+    stop = Event()
+    running = Thread(target=stop.wait)
+    finished = Thread(target=lambda: None)
+    pending = Thread(target=lambda: None)
+    finished.start()
+    finished.join()
+    running.start()
+    tasks = [finished, running, pending]
+    monkeypatch.setitem(multitasking.config, "TASKS", tasks)
+    try:
+        scheduler._maintain_worker_memory()
+        assert multitasking.get_list_of_tasks() == [running, pending]
+        pending.start()
+        pending.join()
+        scheduler._maintain_worker_memory()
+        assert multitasking.get_list_of_tasks() == [running]
+    finally:
+        stop.set()
+        running.join()
+
+
+def test_scheduled_holdings_reload_refreshes_running_bot(monkeypatch):
+    from src.tools import notion_holdings, scheduler, telegram_bot
+
+    held = {"shares": 10}
+    watch = {"shares": 0}
+    data = {"MSFT": held, "NVDA": watch}
+    monkeypatch.setattr(notion_holdings, "reload_holdings", lambda: data)
+    monkeypatch.setattr(scheduler, "WATCHLIST_DATA", {})
+    monkeypatch.setattr(scheduler, "WATCHLIST", [])
+    monkeypatch.setattr(telegram_bot, "WATCHLIST", {"OLD": held})
+    monkeypatch.setattr(telegram_bot, "WATCHLIST_TICKERS", ["OLD"])
+    monkeypatch.setattr(telegram_bot, "WATCHLIST_TICKERS_SET", {"OLD"})
+    monkeypatch.setattr(telegram_bot, "PORTFOLIO", {"OLD": held})
+    monkeypatch.setattr(telegram_bot, "WATCHLIST_ONLY", {})
+
+    scheduler.auto_reload_holdings(telegram_bot.refresh_holdings)
+
+    assert scheduler.WATCHLIST_DATA == telegram_bot.WATCHLIST == data
+    assert telegram_bot.WATCHLIST_TICKERS == ["MSFT", "NVDA"]
+    assert telegram_bot.WATCHLIST_TICKERS_SET == {"MSFT", "NVDA"}
+    assert telegram_bot.PORTFOLIO == {"MSFT": held}
+    assert telegram_bot.WATCHLIST_ONLY == {"NVDA": watch}

@@ -1,6 +1,7 @@
 import os
 import schedule
 import time
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 _HKT = timezone(timedelta(hours=8))
@@ -1078,7 +1079,7 @@ def _check_recovery_alerts(prices: dict, held_data: dict):
 # edits made directly in Notion (or by anything other than the bot's own
 # buy/sell tools) show up without a manual step.
 
-def auto_reload_holdings():
+def auto_reload_holdings(refresh_bot=None):
     """Refresh both modules' in-memory holdings from Notion. Mutates every
     dict in place (never rebinds the module-level name) so any other module
     already holding a reference sees the update immediately — same pattern
@@ -1092,12 +1093,8 @@ def auto_reload_holdings():
         WATCHLIST[:] = list(new_data.keys())
 
         try:
-            import src.tools.telegram_bot as _tb
-            _tb.WATCHLIST.clear(); _tb.WATCHLIST.update(new_data)
-            _tb.WATCHLIST_TICKERS[:] = list(new_data.keys())
-            _tb.WATCHLIST_TICKERS_SET.clear(); _tb.WATCHLIST_TICKERS_SET.update(_tb.WATCHLIST_TICKERS)
-            _tb.PORTFOLIO.clear(); _tb.PORTFOLIO.update({t: d for t, d in new_data.items() if (d.get("shares") or 0) > 0})
-            _tb.WATCHLIST_ONLY.clear(); _tb.WATCHLIST_ONLY.update({t: d for t, d in new_data.items() if (d.get("shares") or 0) == 0})
+            if refresh_bot is not None:
+                refresh_bot(new_data)
         except Exception as e:
             print(f"[{datetime.now().strftime('%H:%M')}] telegram_bot sync skipped: {e}")
 
@@ -2080,7 +2077,27 @@ def _maybe_send_monthly_review():
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 
-def run_scheduler():
+def _maintain_worker_memory():
+    """Release finished download threads without slowing parallel fetches."""
+    from multitasking import get_list_of_tasks
+
+    tasks = get_list_of_tasks()
+    # yfinance can append from the bot thread while the scheduler runs.
+    # Remove individual entries; replacing the list can drop concurrent appends.
+    # ident is None until start(), so leave threads that are about to start alone.
+    for task in tuple(tasks):
+        if getattr(task, "ident", None) is not None and not task.is_alive():
+            tasks.remove(task)
+
+    try:
+        lines = Path("/proc/self/status").read_text().splitlines()
+        rss_kib = next(int(line.split()[1]) for line in lines if line.startswith("VmRSS:"))
+    except (OSError, StopIteration, ValueError, IndexError):
+        return  # Linux-only measurement; cleanup still runs locally.
+    print(f"[worker] rss_mib={rss_kib / 1024:.1f} download_tasks={len(tasks)}")
+
+
+def run_scheduler(refresh_bot=None):
     """Run the scheduler."""
     print("📅 Scheduler running...")
     print("• Morning briefing: 07:00 HKT Mon–Fri (23:00 UTC Sun–Thu)")
@@ -2108,7 +2125,11 @@ def run_scheduler():
     # Holdings auto-reload — every 30 mins, so Notion edits (trades, ticker
     # fixes, watchlist adds) reach both scheduler.py and telegram_bot.py
     # without a manual "reload" in Telegram
-    schedule.every(30).minutes.do(auto_reload_holdings)
+    schedule.every(30).minutes.do(auto_reload_holdings, refresh_bot)
+
+    # Track the memory trend across market sessions without changing alert cadence.
+    _maintain_worker_memory()
+    schedule.every(30).minutes.do(_maintain_worker_memory)
 
     # Breaking news — every 2 hours, 7am-11pm HKT
     schedule.every(2).hours.do(check_breaking_news)
