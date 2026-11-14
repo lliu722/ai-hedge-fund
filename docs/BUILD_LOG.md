@@ -6,6 +6,7 @@
 > Last updated: 2026-11-14
 
 > Live worker memory fixes verified locally. Production memory and alert delivery still need measurement.
+> The recurring quote path shares a fixed pool of 12 threads. Worker logs include Linux container memory and its configured limit where available.
 
 > **⚠️ 2026-06-30 — two pivots happened. Read before trusting old paths below:**
 > 1. **大清理:** dead code moved out of `src/`. Any `src/core|features|adapters|services/...`
@@ -134,6 +135,8 @@ Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `sr
 ---
 
 ## DECISION LOG (newest first)
+
+- **2026-11-14** · Bound recurring quote downloads to one shared pool across the scheduler and bot, retain per-symbol results and failure isolation, and report container memory alongside process memory. Verified with a 120-symbol batch and public US/HK quotes. · `src/tools/prices.py`, `src/tools/scheduler.py`, `tests/test_live_bot_paths.py`
 
 - **2026-11-14** · Release completed download threads, log process memory, and refresh holdings in the running bot without building a duplicate agent. · `src/tools/scheduler.py`, `src/tools/telegram_bot.py`, `tests/test_live_bot_paths.py`
 

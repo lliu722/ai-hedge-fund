@@ -2094,7 +2094,14 @@ def _maintain_worker_memory():
         rss_kib = next(int(line.split()[1]) for line in lines if line.startswith("VmRSS:"))
     except (OSError, StopIteration, ValueError, IndexError):
         return  # Linux-only measurement; cleanup still runs locally.
-    print(f"[worker] rss_mib={rss_kib / 1024:.1f} download_tasks={len(tasks)}")
+    metrics = [f"rss_mib={rss_kib / 1024:.1f}", f"download_tasks={len(tasks)}"]
+    for filename, label in (("memory.current", "container_mib"), ("memory.max", "limit_mib")):
+        try:
+            value = Path("/sys/fs/cgroup", filename).read_text().strip()
+            metrics.append(f"{label}={int(value) / 2**20:.1f}")
+        except (OSError, ValueError):
+            continue  # cgroup v2 files may be unavailable; "max" is unlimited.
+    print("[worker] " + " ".join(metrics))
 
 
 def run_scheduler(refresh_bot=None):

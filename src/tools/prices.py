@@ -9,6 +9,9 @@ from concurrent.futures import ThreadPoolExecutor
 _cache = {}
 _cache_lock = threading.Lock()
 _CACHE_SECONDS = 120
+# Reuse a fixed set of threads and their HTTP handles across briefings, alerts,
+# and Telegram price lookups. A large watchlist no longer spawns one per symbol.
+_quote_workers = ThreadPoolExecutor(max_workers=12, thread_name_prefix="quotes")
 
 # ── Crypto ID map (Notion ticker -> CoinGecko ID) ─────────────────────────────
 CRYPTO_IDS = {
@@ -150,10 +153,27 @@ def _fetch_one_detailed(ticker: str) -> dict:
         return {}
 
 
+def _fetch_two_day_quote(symbol: str) -> dict:
+    try:
+        closes = yf.Ticker(symbol).history(period="2d", auto_adjust=True, actions=False)["Close"].dropna()
+        if closes.empty:
+            return {}
+        today = float(closes.iloc[-1])
+        prev = float(closes.iloc[-2]) if len(closes) >= 2 else 0
+        return {
+            "price": round(today, 2),
+            "change_pct": round((today - prev) / prev * 100, 2) if prev else 0,
+            "week52_high": None, "week52_low": None,
+            "market_cap": None, "pe_ratio": None, "volume": None,
+        }
+    except Exception:
+        return {}
+
+
 def _fetch_batch_fast(tickers: list) -> dict:
     """
     Fetch price + daily change for many tickers at once.
-    - Equity/ETF/index: single batched yf.download call
+    - Equity/ETF/index: parallel history calls through the shared quote pool
     - Crypto: single batched CoinGecko call
     Results keyed to the ORIGINAL Notion ticker.
     """
@@ -161,7 +181,7 @@ def _fetch_batch_fast(tickers: list) -> dict:
     if not tickers:
         return results
 
-    norm_map = {}    # yfinance_ticker -> original_ticker
+    norm_map = {}    # yfinance_ticker -> original tickers
     crypto_list = [] # original tickers to fetch via CoinGecko
 
     for t in tickers:
@@ -171,60 +191,16 @@ def _fetch_batch_fast(tickers: list) -> dict:
         elif n.startswith("CRYPTO:"):
             crypto_list.append(t)    # route to CoinGecko
         else:
-            norm_map[n] = t          # route to yfinance
+            norm_map.setdefault(n, []).append(t)
 
     # ── CoinGecko fetch ───────────────────────────────────────────────────────
     if crypto_list:
         results.update(_fetch_crypto_prices(crypto_list))
 
-    # ── yfinance batch fetch ──────────────────────────────────────────────────
-    yf_tickers = list(norm_map.keys())
-    if not yf_tickers:
-        return results  # nothing left to fetch from yfinance
-
-    try:
-        data = yf.download(
-            yf_tickers,
-            period="2d",
-            progress=False,
-            group_by="ticker",
-            threads=True,
-        )
-    except Exception:
-        for orig in norm_map.values():
-            results[orig] = {}
-        return results
-
-    for yf_t in yf_tickers:
-        orig = norm_map[yf_t]
-        try:
-            # group_by="ticker" always returns a (Ticker, Price) MultiIndex,
-            # for a single ticker too — data["Close"] raises KeyError since
-            # "Close" is never a top-level key. Confirmed against the currently
-            # pinned yfinance (1.4.1); previously silently caught by the
-            # except below, so every _fetch_batch_fast call returned {} for
-            # every ticker regardless of count.
-            closes = data[yf_t]["Close"].dropna()
-            if len(closes) >= 2:
-                today = float(closes.iloc[-1])
-                prev = float(closes.iloc[-2])
-                results[orig] = {
-                    "price": round(today, 2),
-                    "change_pct": round((today - prev) / prev * 100, 2) if prev else 0,
-                    "week52_high": None, "week52_low": None,
-                    "market_cap": None, "pe_ratio": None, "volume": None,
-                }
-            elif len(closes) == 1:
-                results[orig] = {
-                    "price": round(float(closes.iloc[-1]), 2),
-                    "change_pct": 0,
-                    "week52_high": None, "week52_low": None,
-                    "market_cap": None, "pe_ratio": None, "volume": None,
-                }
-            else:
-                results[orig] = {}
-        except Exception:
-            results[orig] = {}
+    quotes = _quote_workers.map(_fetch_two_day_quote, norm_map)
+    for originals, quote in zip(norm_map.values(), quotes):
+        for original in originals:
+            results[original] = quote.copy()
 
     return results
 

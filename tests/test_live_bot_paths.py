@@ -184,3 +184,42 @@ def test_scheduled_holdings_reload_refreshes_running_bot(monkeypatch):
     assert telegram_bot.WATCHLIST_TICKERS_SET == {"MSFT", "NVDA"}
     assert telegram_bot.PORTFOLIO == {"MSFT": held}
     assert telegram_bot.WATCHLIST_ONLY == {"NVDA": watch}
+
+
+def test_fast_quotes_keep_provider_work_bounded_and_preserve_symbol_results(monkeypatch):
+    from threading import Lock
+    from time import sleep
+
+    import pandas as pd
+    from src.tools import prices
+
+    active = peak = 0
+    gate = Lock()
+
+    def history(ticker, **kwargs):
+        nonlocal active, peak
+        with gate:
+            active += 1
+            peak = max(peak, active)
+        try:
+            sleep(0.015)
+            if ticker.ticker == "BROKEN":
+                raise TimeoutError
+            if ticker.ticker == "ONE":
+                return pd.DataFrame({"Close": [99.0]})
+            return pd.DataFrame({"Close": [100.0, 105.0]})
+        finally:
+            with gate:
+                active -= 1
+
+    monkeypatch.setattr(prices.yf.Ticker, "history", history)
+    tickers = [f"TEST{i}" for i in range(120)] + ["0700.HK", "700.HK", "BROKEN", "ONE"]
+    quotes = prices._fetch_batch_fast(tickers)
+
+    assert 1 < peak <= 12
+    assert set(quotes) == set(tickers)
+    assert quotes["0700.HK"] == quotes["700.HK"] == quotes["TEST119"]
+    assert quotes["TEST119"]["price"] == 105.0
+    assert quotes["TEST119"]["change_pct"] == 5.0
+    assert quotes["BROKEN"] == {}
+    assert quotes["ONE"]["change_pct"] == 0
