@@ -5,7 +5,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 _HKT = timezone(timedelta(hours=8))
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dotenv import load_dotenv
 from src.tools.notion_holdings import get_holdings_cached, FALLBACK_WATCHLIST
 
@@ -1828,6 +1828,23 @@ def check_alerts_report() -> str:
 
 # ── Market Open Alerts ────────────────────────────────────────────────────────
 
+def _collect_open_data(fetches: dict, timeout: float = 20) -> dict:
+    """Keep completed sources when any other source fails or exceeds the deadline."""
+    done, _ = wait([future for future, _ in fetches.values()], timeout=timeout)
+    result = {}
+    for label, (future, fallback) in fetches.items():
+        result[label] = fallback
+        if future not in done:
+            future.cancel()
+            print(f"[market-open] {label}: deadline exceeded")
+            continue
+        try:
+            result[label] = future.result()
+        except Exception as error:
+            print(f"[market-open] {label}: {type(error).__name__}: {error}")
+    return result
+
+
 def send_market_open_alert(market: str) -> bool:
     """Config-driven market open brief. Add a new market by adding an entry to _MARKET_CFG.
 
@@ -1881,18 +1898,24 @@ def send_market_open_alert(market: str) -> bool:
                         when = info.get("when", "")
                         out.append(f"{fmt(t)}{(' (' + when + ')') if when else ''}")
                 return out
-            except Exception:
-                return []
+            except Exception as error:
+                print(f"[market-open] earnings: {type(error).__name__}: {error}")
+                return None
 
-        with ThreadPoolExecutor(max_workers=3) as ex:
-            f_pre    = ex.submit(_pre_market_moves)
-            f_prices = ex.submit(get_live_prices, mkt_tickers)
-            f_macro  = ex.submit(get_live_prices, list(cfg["open_macro"].keys()))
-            f_earn   = ex.submit(_earnings_today)
-            pre_moves      = f_pre.result(timeout=20)
-            prices         = f_prices.result(timeout=20)
-            macro_prices   = f_macro.result(timeout=15)
-            earnings_today = f_earn.result(timeout=15)
+        ex = ThreadPoolExecutor(max_workers=4)
+        fetches = {
+            "pre-market": (ex.submit(_pre_market_moves), {}),
+            "positions": (ex.submit(get_live_prices, mkt_tickers), {}),
+            "macro": (ex.submit(get_live_prices, list(cfg["open_macro"].keys())), {}),
+            "earnings": (ex.submit(_earnings_today), None),
+        }
+        try:
+            data = _collect_open_data(fetches)
+        finally:
+            # A slow provider must not hold the scheduler or suppress the brief.
+            ex.shutdown(wait=False, cancel_futures=True)
+        pre_moves, prices = data["pre-market"], data["positions"]
+        macro_prices, earnings_today = data["macro"], data["earnings"]
 
         # ── Build message ──────────────────────────────────────────────────────
         # Header: ONE clock, plus what happens next. Previously carried two
@@ -1903,6 +1926,10 @@ def send_market_open_alert(market: str) -> bool:
             f"<i>{hkt_str('%a %d %b')} · now {hkt_str('%H:%M')} HKT · "
             f"opens {cfg['open_time']}</i>\n\n"
         )
+
+        unavailable = [label for label in ("positions", "macro") if not data[label]]
+        if unavailable:
+            msg += "<i>Data unavailable: " + ", ".join(unavailable) + "</i>\n\n"
 
         # Section 1 — Macro snapshot. Sub-0.05% moves are noise: rendering
         # them as "▼ Nasdaq Fut: -0.0%" puts a direction arrow on a flat
@@ -1931,6 +1958,8 @@ def send_market_open_alert(market: str) -> bool:
         if earnings_today:
             for item in earnings_today[:6]:
                 msg += f"• {item}\n"
+        elif earnings_today is None:
+            msg += "<i>Earnings data unavailable</i>\n"
         else:
             msg += "<i>Nothing from your watchlist today</i>\n"
 
@@ -2104,15 +2133,21 @@ def _maintain_worker_memory():
     print("[worker] " + " ".join(metrics))
 
 
+def _schedule_us_market_alerts():
+    for weekday in ("monday", "tuesday", "wednesday", "thursday", "friday"):
+        getattr(schedule.every(), weekday).at("09:20", "America/New_York").do(send_market_open_alert, "US")
+        getattr(schedule.every(), weekday).at("16:05", "America/New_York").do(send_market_close_alert, "US")
+
+
 def run_scheduler(refresh_bot=None):
     """Run the scheduler."""
     print("📅 Scheduler running...")
     print("• Morning briefing: 07:00 HKT Mon–Fri (23:00 UTC Sun–Thu)")
     print("• HK open alert:    09:20 HKT Mon–Fri (01:20 UTC)")
-    print("• US open alert:    09:20 ET  Mon–Fri (13:20 UTC)")
+    print("• US open alert:    09:20 America/New_York Mon–Fri (DST-aware)")
     print("• HK close:         16:05 HKT (08:05 UTC)")
     print("• EU close:         23:35 HKT (15:35 UTC)")
-    print("• US close:         04:05 HKT+1 (20:05 UTC)")
+    print("• US close:         16:05 America/New_York Mon–Fri (DST-aware)")
     print("• Weekly digest:    18:00 HKT Sunday (10:00 UTC)")
     print("• Price alerts:     every 30 mins during market hours\n")
 
@@ -2144,7 +2179,6 @@ def run_scheduler(refresh_bot=None):
     # Market close alerts (UTC times)
     schedule.every().day.at("08:05").do(lambda: send_market_close_alert("HK"))   # HK close 16:00 HKT
     schedule.every().day.at("15:35").do(lambda: send_market_close_alert("EU"))   # EU close 23:35 HKT
-    schedule.every().day.at("20:05").do(lambda: send_market_close_alert("US"))   # US close 04:05 HKT+1
 
     # Monthly 复盘 — 1st of each month, 9am HKT (01:00 UTC)
     schedule.every().day.at("01:00").do(_maybe_send_monthly_review)
@@ -2156,12 +2190,7 @@ def run_scheduler(refresh_bot=None):
     schedule.every().wednesday.at("01:20").do(lambda: send_market_open_alert("HK"))
     schedule.every().thursday.at("01:20").do(lambda: send_market_open_alert("HK"))
     schedule.every().friday.at("01:20").do(lambda: send_market_open_alert("HK"))
-    # US open: 9:20am ET = 13:20 UTC (EDT) — ~5 min early Nov–Mar, acceptable
-    schedule.every().monday.at("13:20").do(lambda: send_market_open_alert("US"))
-    schedule.every().tuesday.at("13:20").do(lambda: send_market_open_alert("US"))
-    schedule.every().wednesday.at("13:20").do(lambda: send_market_open_alert("US"))
-    schedule.every().thursday.at("13:20").do(lambda: send_market_open_alert("US"))
-    schedule.every().friday.at("13:20").do(lambda: send_market_open_alert("US"))
+    _schedule_us_market_alerts()
 
     while True:
         schedule.run_pending()

@@ -223,3 +223,39 @@ def test_fast_quotes_keep_provider_work_bounded_and_preserve_symbol_results(monk
     assert quotes["TEST119"]["change_pct"] == 5.0
     assert quotes["BROKEN"] == {}
     assert quotes["ONE"]["change_pct"] == 0
+
+
+def test_open_brief_keeps_ready_data_when_another_source_times_out():
+    from concurrent.futures import Future
+    from src.tools.scheduler import _collect_open_data
+    ready, slow, failed = Future(), Future(), Future()
+    ready.set_result({"SPY": {"price": 100}})
+    failed.set_exception(ValueError("bad data"))
+    values = _collect_open_data({
+        "macro": (ready, {}),
+        "earnings": (slow, None),
+        "positions": (failed, {}),
+    }, timeout=0)
+    assert values == {"macro": {"SPY": {"price": 100}}, "earnings": None, "positions": {}}
+
+
+@pytest.mark.parametrize("day,utc_hour", [("2026-07-06", 13), ("2026-11-16", 14)])
+def test_us_jobs_follow_new_york_clock_in_both_seasons(monkeypatch, day, utc_hour):
+    import datetime as dt
+    import schedule
+    from src.tools.scheduler import _schedule_us_market_alerts
+
+    class Clock(dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            fixed = dt.datetime.fromisoformat(day).replace(hour=8, tzinfo=dt.timezone.utc)
+            return fixed.astimezone(tz) if tz else fixed.astimezone().replace(tzinfo=None)
+
+    monkeypatch.setattr(schedule.datetime, "datetime", Clock)
+    monkeypatch.setattr(schedule.default_scheduler, "jobs", [])
+    _schedule_us_market_alerts()
+    jobs = schedule.get_jobs()
+    assert len(jobs) == 10
+    monday = [job for job in jobs if job.start_day == "monday"]
+    assert [job.next_run.astimezone(dt.timezone.utc).hour for job in monday] == [utc_hour, utc_hour + 7]
+    assert [job.next_run.minute for job in monday] == [20, 5]

@@ -3,7 +3,7 @@
 > Architecture: **`src/desks/MASTER.md`**. This log says *where each piece is + what's next*.
 > **Rule:** after every change, update the matching line here (status + location), and add a line to the Decision Log.
 > Status key: ✅ done · 🟡 partial · 🔴 not built · ⏸ parked · 🔁 needs migration onto new model
-> Last updated: 2026-11-14
+> Last updated: 2026-11-18
 
 > Live worker memory fixes verified locally. Production memory and alert delivery still need measurement.
 > The recurring quote path shares a fixed pool of 12 threads. Worker logs include Linux container memory and its configured limit where available.
@@ -135,6 +135,9 @@ Each desk: infrastructure (B) → core functions (A) → risk layer (C). See `sr
 ---
 
 ## DECISION LOG (newest first)
+
+- **2026-11-18** · Fixed US open/close jobs to use America/New_York weekdays at 09:20/16:05 with daylight saving adjustment. Opening briefs retain completed data after a shared 20-second deadline and explicitly label unavailable earnings/market data. Regression coverage checks both seasons and failed/slow sources. · `src/tools/scheduler.py`, `tests/test_live_bot_paths.py`
+
 
 - **2026-11-14** · Bound recurring quote downloads to one shared pool across the scheduler and bot, retain per-symbol results and failure isolation, and report container memory alongside process memory. Verified with a 120-symbol batch and public US/HK quotes. · `src/tools/prices.py`, `src/tools/scheduler.py`, `tests/test_live_bot_paths.py`
 
